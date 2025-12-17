@@ -49,11 +49,6 @@ const (
 )
 
 func SetupController(ctx context.Context, cc Config) {
-	if !cc.shouldEnableAnyController() {
-		klog.Info("No controllers enabled, exiting")
-		return
-	}
-
 	config, err := clientcmd.BuildConfigFromFlags(cc.MasterURL, cc.Kubeconfig)
 	if err != nil {
 		klog.Fatalf("build client config: %v", err)
@@ -69,32 +64,24 @@ func SetupController(ctx context.Context, cc Config) {
 	var msc *modelserving.ModelServingController
 	var ac *autoscaler.AutoscaleController
 
-	if cc.shouldEnableController(ModelBoosterController) {
-		mc = modelbooster.NewModelBoosterController(kubeClient, client)
-		klog.Info("ModelBooster controller will be started")
-	} else {
-		klog.Info("ModelBooster controller is disabled")
-	}
-
-	if cc.shouldEnableController(ModelServingController) {
-		msc, err = modelserving.NewModelServingController(kubeClient, client, volcanoClient)
-		if err != nil {
-			klog.Fatalf("failed to create ModelServing controller: %v", err)
+	for ctrl, enable := range cc.Controllers {
+		if enable {
+			switch ctrl {
+			case ModelBoosterController:
+				mc = modelbooster.NewModelBoosterController(kubeClient, client)
+			case ModelServingController:
+				msc, err = modelserving.NewModelServingController(kubeClient, client, volcanoClient)
+				if err != nil {
+					klog.Fatalf("failed to create ModelServing controller: %v", err)
+				}
+			case AutoscalerController:
+				namespace, err := utils.GetInClusterNameSpace()
+				if err != nil {
+					klog.Fatalf("failed to get in-cluster namespace: %v", err)
+				}
+				ac = autoscaler.NewAutoscaleController(kubeClient, client, namespace)
+			}
 		}
-		klog.Info("ModelServing controller will be started")
-	} else {
-		klog.Info("ModelServing controller is disabled")
-	}
-
-	if cc.shouldEnableController(AutoscalerController) {
-		namespace, err := utils.GetInClusterNameSpace()
-		if err != nil {
-			klog.Fatalf("create Autoscaler client: %v", err)
-		}
-		ac = autoscaler.NewAutoscaleController(kubeClient, client, namespace)
-		klog.Info("Autoscaler controller will be started")
-	} else {
-		klog.Info("Autoscaler controller is disabled")
 	}
 
 	startControllers := func(ctx context.Context) {

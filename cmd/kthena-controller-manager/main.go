@@ -69,18 +69,11 @@ func main() {
 	pflag.BoolVar(&cc.EnableLeaderElection, "leader-elect", false, "Enable leader election for controller. "+
 		"Enabling this will ensure there is only one active controller. Default is false.")
 	pflag.IntVar(&cc.Workers, "workers", 5, "number of workers to run. Default is 5")
-	pflag.StringVar(&controllers, "controllers", "", "Comma-separated list of controllers to enable. Available: modelserving,modelbooster,autoscaler. "+
+	pflag.StringVar(&controllers, "controllers", "*", "Comma-separated list of controllers to enable. Available: modelserving,modelbooster,autoscaler. "+
 		"If empty, all controllers are enabled.")
-
 	pflag.Parse()
 
-	if controllers != "" {
-		controllerList := strings.Split(controllers, ",")
-		for i, ctrl := range controllerList {
-			controllerList[i] = strings.TrimSpace(ctrl)
-		}
-		cc.Controllers = controllerList
-	}
+	cc.Controllers = parseControllers(controllers)
 
 	pflag.CommandLine.VisitAll(func(f *pflag.Flag) {
 		klog.Infof("Flag: %s, Value: %s", f.Name, f.Value.String())
@@ -250,4 +243,36 @@ func waitForCertsReady(keyFile, CertFile string) bool {
 		}
 		time.Sleep(waitInterval)
 	}
+}
+
+func parseControllers(controllers string) map[string]bool {
+	defaultControllers := map[string]bool{
+		controller.ModelServingController: false,
+		controller.ModelBoosterController: false,
+		controller.AutoscalerController:   false,
+	}
+
+	if strings.Contains(controllers, "*") {
+		parts := strings.Split(controllers, ",")
+		hasWildcardOnly := len(parts) == 1 && parts[0] == "*"
+		if !hasWildcardOnly {
+			klog.Warningf("Invalid controller configuration: when using '*', it must be the only value. Ignoring other values.")
+		}
+		// If only have "*", all Controllers will enabled
+		if controllers == "*" {
+			for k := range defaultControllers {
+				defaultControllers[k] = true
+			}
+			return defaultControllers
+		}
+	}
+	// Specific Controllers enabled
+	for _, ctrl := range strings.Split(controllers, ",") {
+		if _, ok := defaultControllers[ctrl]; ok {
+			defaultControllers[ctrl] = true
+		} else {
+			klog.Warningf("unknown controller %q specified, available controllers are: modelserving, modelbooster, autoscaler", ctrl)
+		}
+	}
+	return defaultControllers
 }

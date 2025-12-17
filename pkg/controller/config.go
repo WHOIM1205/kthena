@@ -21,29 +21,5 @@ type Config struct {
 	Workers              int
 	Kubeconfig           string
 	MasterURL            string
-	Controllers          []string
-}
-
-// shouldEnableController checks if a specific controller should be enabled
-func (cc Config) shouldEnableController(controllerName string) bool {
-	// If no controllers are specified, enable all by default
-	if len(cc.Controllers) == 0 {
-		return true
-	}
-
-	// Check if the specified controller is in the list
-	for _, ctrl := range cc.Controllers {
-		if ctrl == controllerName {
-			return true
-		}
-	}
-	return false
-}
-
-// shouldEnableAnyController checks if any of the controllers should be enabled
-func (cc Config) shouldEnableAnyController() bool {
-	return len(cc.Controllers) == 0 ||
-		cc.shouldEnableController(ModelServingController) ||
-		cc.shouldEnableController(ModelBoosterController) ||
-		cc.shouldEnableController(AutoscalerController)
+	Controllers          map[string]bool
 }

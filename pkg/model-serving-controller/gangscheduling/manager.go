@@ -206,7 +206,6 @@ func (m *Manager) calculateRequirements(mi *workloadv1alpha1.ModelServing, podGr
 			}
 		}
 	}
-	fmt.Printf("minMember: %d, minTaskMember: %v, minResources: %v\n", minMember, minTaskMember, minResources)
 	return minMember, minTaskMember, minResources
 }
 
