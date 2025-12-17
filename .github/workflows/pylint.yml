@@ -24,4 +24,4 @@ jobs:
           pip install pylint
       - name: Analysing the code with pylint
         run: |
-          pylint --errors-only --disable=import-error,missing-docstring $(git ls-files '*.py')
+          pylint --fail-under=7.0 --disable=import-error,missing-docstring $(git ls-files '*.py')
