@@ -304,7 +304,7 @@ def main() -> None:
 async def load_lora_adapter(request: Request, background_tasks: BackgroundTasks) -> JSONResponse:
     """
     Load LoRA adapter with integrated download capability.
-    
+
     Request body should contain:
     - lora_name: str - Name of the LoRA adapter
     - source: str (optional) - Source URL for downloading (s3://, obs://, pvc://, or HuggingFace)
@@ -387,7 +387,7 @@ async def load_lora_adapter(request: Request, background_tasks: BackgroundTasks)
 
             try:
                 response_content = response.json()
-            except (json.JSONDecodeError, ValueError) as e:
+            except (json.JSONDecodeError, ValueError):
                 response_content = {"message": response.text}
 
             return JSONResponse(content=response_content, status_code=response.status_code)
@@ -412,7 +412,7 @@ async def unload_lora_adapter(request: Request) -> JSONResponse:
 
         try:
             response_content = response.json()
-        except (json.JSONDecodeError, ValueError) as e:
+        except (json.JSONDecodeError, ValueError):
             response_content = {"message": response.text}
 
         return JSONResponse(content=response_content, status_code=response.status_code)
@@ -427,7 +427,7 @@ async def unload_lora_adapter(request: Request) -> JSONResponse:
 async def download_model_endpoint(request: Request, background_tasks: BackgroundTasks) -> JSONResponse:
     """
     Download model from various sources (S3, OBS, PVC, HuggingFace)
-    
+
     Request body should contain:
     - source: str - Model source URL (s3://, obs://, pvc://, or HuggingFace model name)
     - output_dir: str - Local directory to save the model

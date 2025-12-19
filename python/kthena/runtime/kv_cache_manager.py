@@ -81,7 +81,8 @@ class VLLMKVCacheRedisManager:
             await pipe.execute()
 
             logger.info(
-                f"Runtime Redis Write - Model: {model_name}, Pod: {pod_identifier}, BlockHashes: {block_hashes}, Count: {len(block_hashes)}")
+                f"Runtime Redis Write - Model: {model_name}, Pod: {pod_identifier}, "
+                f"BlockHashes: {block_hashes}, Count: {len(block_hashes)}")
             return True
 
         except Exception as e:
@@ -235,7 +236,8 @@ class VLLMKVCacheRedisManager:
             deleted_count = sum(1 for result in results[:len(matrix_keys)] if result > 0)
 
             logger.info(
-                f"Cleared {deleted_count} matrix blocks and {len(mapping_keys)} mapping keys for model {model_name}, pod {pod_identifier}")
+                f"Cleared {deleted_count} matrix blocks and {len(mapping_keys)} mapping keys "
+                f"for model {model_name}, pod {pod_identifier}")
             return deleted_count
 
         except Exception as e:
@@ -257,7 +259,8 @@ class VLLMKVCacheEventHandler(EventHandler):
                 return
 
             logger.info(
-                f"Handling vLLM event: {event_data.event_type.value} for model={event_data.model_name}, pod={event_data.pod_identifier}")
+                f"Handling vLLM event: {event_data.event_type.value} "
+                f"for model={event_data.model_name}, pod={event_data.pod_identifier}")
 
             if event_data.event_type == EventType.VLLM_BLOCK_STORED:
                 await self._handle_block_stored(event_data)

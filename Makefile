@@ -107,6 +107,11 @@ lint: golangci-lint ## Run golangci-lint linter
 lint-fix: golangci-lint ## Run golangci-lint linter and perform fixes
 	$(GOLANGCI_LINT) run --fix
 
+.PHONY: lint-python
+lint-python: ## Run python linter
+	pip install ruff
+	ruff check . --config python/kthena/pyproject.toml
+
 .PHONY: fmt
 fmt: ## Run go fmt against code.
 	go fmt ./...

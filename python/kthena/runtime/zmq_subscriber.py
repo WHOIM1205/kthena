@@ -202,7 +202,8 @@ class VLLMZMQSubscriber:
 
             events_count = len(event_batch.events) if event_batch.events else 0
             logger.info(
-                f"Received event batch: ts={event_batch.ts}, events_count={events_count}, dp_rank={event_batch.data_parallel_rank}")
+                f"Received event batch: ts={event_batch.ts}, events_count={events_count}, "
+                f"dp_rank={event_batch.data_parallel_rank}")
 
             if events_count == 0:
                 logger.info("Empty event batch received")

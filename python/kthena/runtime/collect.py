@@ -31,26 +31,26 @@ class MetricAdapter(Collector):
 
     def _parse_and_process_metrics(self, origin_metric_text: str, standard: MetricStandard) -> List[Metric]:
         metrics = []
-        
+
         if not origin_metric_text.strip():
             logger.warning("Empty metric text provided")
             return metrics
-            
+
         try:
             for origin_metric in text_string_to_metric_families(origin_metric_text):
                 metrics.append(origin_metric)
-                
+
                 processed_metric = standard.process(origin_metric)
                 if processed_metric is not None:
                     metrics.append(processed_metric)
-                    
+
         except ValueError as e:
             logger.error("Invalid metric text format: %s", e)
-            raise ValueError(f"Failed to parse metric text: {e}") from e 
+            raise ValueError(f"Failed to parse metric text: {e}") from e
         except Exception as e:
             logger.error("Unexpected error processing metrics: %s", e)
             raise RuntimeError(f"Failed to initialize MetricAdapter: {e}")from e
-            
+
         return metrics
 
     def collect(self) -> Iterable[Metric]:
@@ -60,17 +60,17 @@ class MetricAdapter(Collector):
 async def process_metrics(origin_metric_text: str, standard: MetricStandard) -> bytes:
     if not isinstance(origin_metric_text, str):
         raise TypeError("Metric text must be a string")
-    
+
     if not isinstance(standard, MetricStandard):
         raise TypeError("Standard must be a MetricStandard instance")
-    
+
     registry = CollectorRegistry()
-    
+
     try:
         adapter = MetricAdapter(origin_metric_text, standard)
         registry.register(adapter)
         return generate_latest(registry)
-        
+
     except (ValueError, RuntimeError):
         raise
     except Exception as e:
