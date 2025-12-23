@@ -10,3 +10,5 @@ spec:
       app: deepseek-r1-1-5b
   endpointPickerRef:
     name: deepseek-r1-1-5b
+    port:
+      number: 8080

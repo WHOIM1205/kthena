@@ -29,6 +29,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 )
 
@@ -41,9 +42,10 @@ const (
 
 // RouterTestContext holds the clients needed for router tests
 type RouterTestContext struct {
-	KubeClient   *kubernetes.Clientset
-	KthenaClient *clientset.Clientset
-	Namespace    string
+	KubeClient    *kubernetes.Clientset
+	KthenaClient  *clientset.Clientset
+	DynamicClient dynamic.Interface
+	Namespace     string
 }
 
 // NewRouterTestContext creates a new RouterTestContext
@@ -60,11 +62,16 @@ func NewRouterTestContext(namespace string) (*RouterTestContext, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to create kthena client: %w", err)
 	}
+	dynamicClient, err := dynamic.NewForConfig(config)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create dynamic client: %w", err)
+	}
 
 	return &RouterTestContext{
-		KubeClient:   kubeClient,
-		KthenaClient: kthenaClient,
-		Namespace:    namespace,
+		KubeClient:    kubeClient,
+		KthenaClient:  kthenaClient,
+		DynamicClient: dynamicClient,
+		Namespace:     namespace,
 	}, nil
 }
 
