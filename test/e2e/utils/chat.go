@@ -123,21 +123,25 @@ func CheckChatCompletionsWithURL(t *testing.T, url string, modelName string, mes
 			break
 		}
 
-		// If not successful and we have retries left, retry
-		if attempt < maxRetries-1 {
-			t.Logf("Attempt %d/%d returned status %d or error response, retrying in %v...", attempt+1, maxRetries, resp.StatusCode, backoff)
+		// Only retry for server internal errors (5xx)
+		if attempt < maxRetries-1 && resp.StatusCode >= http.StatusInternalServerError {
+			t.Logf("Attempt %d/%d returned status %d, retrying in %v...", attempt+1, maxRetries, resp.StatusCode, backoff)
 			time.Sleep(backoff)
 			backoff = min(backoff*2, maxBackoff)
 			continue
 		}
 
-		// Last attempt, verify response
+		// For other errors (like 4xx) or if it's the last attempt, don't retry and fail
+		break
+	}
+
+	// Verify final response if not successful
+	if resp.StatusCode != http.StatusOK || responseStr == "" || containsError(responseStr) {
 		t.Logf("Chat response status: %d", resp.StatusCode)
 		t.Logf("Chat response: %s", responseStr)
 		assert.Equal(t, http.StatusOK, resp.StatusCode, "Expected HTTP 200 status code")
 		assert.NotEmpty(t, responseStr, "Chat response is empty")
 		assert.NotContains(t, responseStr, "error", "Chat response contains error")
-		break
 	}
 
 	return &ChatCompletionsResponse{
