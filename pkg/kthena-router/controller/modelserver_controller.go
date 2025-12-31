@@ -216,14 +216,20 @@ func (c *ModelServerController) syncModelServerHandler(key string) error {
 		klog.V(4).Infof("failed to get existing pods for ModelServer %s/%s: %v", ms.Namespace, ms.Name, err)
 	}
 
-	// Build a set of existing pod names for quick lookup
+	// Build a set of existing pod names that are already bound to the model server
 	existingPodNames := sets.New[types.NamespacedName]()
 	for _, podInfo := range existingPods {
+		if !podInfo.HasModelServer(utils.GetNamespaceName(ms)) {
+			// If the pod is not bound to the model server, establish the binding
+			if err := c.store.AppendModelServerToPod(podInfo.Pod, []*aiv1alpha1.ModelServer{ms}); err != nil {
+				klog.Warningf("failed to append modelserver %s/%s to pod %s/%s: %v", ms.Namespace, ms.Name, podInfo.Pod.Namespace, podInfo.Pod.Name, err)
+				continue
+			}
+		}
 		existingPodNames.Insert(utils.GetNamespaceName(podInfo.Pod))
 	}
 
-	// Only add or update pods that are not yet bound to the store
-	// This handles the case where pods became ready before the ModelServer was synced
+	// Add new pods that are not yet bound to the store
 	for _, pod := range podList {
 		if !isPodReady(pod) {
 			continue
@@ -235,9 +241,8 @@ func (c *ModelServerController) syncModelServerHandler(key string) error {
 			continue
 		}
 
-		// Find all ModelServers that match this pod and update the store
-		if err := c.addOrUpdatePod(pod); err != nil {
-			klog.Errorf("failed to add or update pod %s/%s: %v", pod.Namespace, pod.Name, err)
+		if err := c.store.AddOrUpdatePod(pod, []*aiv1alpha1.ModelServer{ms}); err != nil {
+			klog.Warningf("failed to add new pod %s/%s to data store: %v", pod.Namespace, pod.Name, err)
 		}
 	}
 
