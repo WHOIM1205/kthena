@@ -68,7 +68,6 @@ func NewManager(kubeClient kubernetes.Interface, volcanoClient volcanoclient.Int
 	newManager.hasPodGroupCRD.Store(false)
 	newManager.hasSubGroupPolicy.Store(false)
 
-	// init the hasPodGroupCRD and hasSubGroupPolicy values
 	crd, err := apiextClient.ApiextensionsV1().CustomResourceDefinitions().Get(
 		context.TODO(),
 		podGroupCRDName,
@@ -86,34 +85,23 @@ func NewManager(kubeClient kubernetes.Interface, volcanoClient volcanoclient.Int
 			return nil
 		}
 	} else {
-		newManager.hasPodGroupCRD.Store(true)
-		klog.Info("[CRD Added] PodGroup CRD detected")
-		if podGroupCRDHasSubGroup(crd) {
-			klog.Info("[CRD Added] PodGroup CRD has subGroupPolicy")
-			newManager.hasSubGroupPolicy.Store(true)
-		} else {
-			klog.Info("[CRD Added] PodGroup CRD does not have subGroupPolicy")
-			newManager.hasSubGroupPolicy.Store(false)
-		}
+		newManager.handlePodGroupCRDChange(crd, false)
 	}
 
-	// Set up informer to watch for PodGroup CRD changes
-	factory := apiextinformers.NewSharedInformerFactory(apiextClient, 0)
+	// Set up a shared informer factory for CustomResourceDefinitions,
+	// configured to watch only the PodGroup CRD by name
+	factory := apiextinformers.NewSharedInformerFactoryWithOptions(
+		apiextClient,
+		0,
+		apiextinformers.WithTweakListOptions(func(opts *metav1.ListOptions) {
+			opts.FieldSelector = "metadata.name=" + podGroupCRDName
+		}),
+	)
 	crdInformer := factory.Apiextensions().V1().CustomResourceDefinitions().Informer()
 	_, _ = crdInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
 			crd := obj.(*apiextv1.CustomResourceDefinition)
-			if crd.Name == podGroupCRDName {
-				klog.Info("[CRD Added] PodGroup CRD detected")
-				newManager.hasPodGroupCRD.Store(true)
-				if podGroupCRDHasSubGroup(crd) {
-					klog.Info("[CRD Added] PodGroup CRD has subGroupPolicy feature")
-					newManager.hasSubGroupPolicy.Store(true)
-				} else {
-					klog.Info("[CRD Added] PodGroup CRD does not have subGroupPolicy feature")
-					newManager.hasSubGroupPolicy.Store(false)
-				}
-			}
+			newManager.handlePodGroupCRDChange(crd, false)
 		},
 		UpdateFunc: func(oldObj, newObj interface{}) {
 			newCrd, ok := newObj.(*apiextv1.CustomResourceDefinition)
@@ -127,27 +115,11 @@ func NewManager(kubeClient kubernetes.Interface, volcanoClient volcanoclient.Int
 				return
 			}
 
-			if newCrd.Name != podGroupCRDName {
-				return
-			}
-
-			newManager.hasPodGroupCRD.Store(true)
-
-			if podGroupCRDHasSubGroup(newCrd) {
-				klog.Info("[CRD Updated] PodGroup CRD has subGroupPolicy feature")
-				newManager.hasSubGroupPolicy.Store(true)
-			} else {
-				klog.Info("[CRD Updated] PodGroup CRD does not have subGroupPolicy feature")
-				newManager.hasSubGroupPolicy.Store(false)
-			}
+			newManager.handlePodGroupCRDChange(newCrd, false)
 		},
 		DeleteFunc: func(obj interface{}) {
 			crd := obj.(*apiextv1.CustomResourceDefinition)
-			if crd.Name == podGroupCRDName {
-				klog.Info("[CRD Deleted] PodGroup CRD removed")
-				newManager.hasPodGroupCRD.Store(false)
-				newManager.hasSubGroupPolicy.Store(false)
-			}
+			newManager.handlePodGroupCRDChange(crd, true)
 		},
 	})
 
@@ -285,25 +257,28 @@ func (m *Manager) calculateRequirements(mi *workloadv1alpha1.ModelServing, podGr
 			continue
 		}
 
-		// When length(roleList) <= expectReplicas, that is, when scaling up or updating.
-		// Provide the roleNameList to be updated.
-		needHandledRoleNameList := needHandledRoleNameList(expectReplicas, roleList, role.Name)
+		// When length(roleNames) <= expectReplicas, that is, when scaling up or updating.
+		// Provide the roleNames to be updated.
+		roleNames := calculateRequiredRoleNames(expectReplicas, roleList, role.Name)
 
 		// Only include role replicas up to the minimum required
 		podsPerTask := 1 + int(role.WorkerReplicas) // entry + workers
-		minRoleMember[role.Name] = int32(podsPerTask)
 		minMember = minMember + (podsPerTask * expectReplicas)
 
-		// Only include role replicas up to the minimum required
-		for _, taskName := range needHandledRoleNameList {
-			minTaskMember[taskName] = int32(podsPerTask)
+		if m.hasSubGroupPolicy.Load() {
+			minRoleMember[role.Name] = int32(podsPerTask)
+		} else {
+			// Only include role replicas up to the minimum required
+			for _, taskName := range roleNames {
+				minTaskMember[taskName.Name] = int32(podsPerTask)
+			}
 		}
 
 		// Aggregate resources
-		m.aggregateResources(&minResources, &role.EntryTemplate.Spec, expectReplicas)
+		minResources = m.aggregateResources(minResources, &role.EntryTemplate.Spec, expectReplicas)
 		if role.WorkerTemplate != nil {
 			for i := 0; i < int(role.WorkerReplicas); i++ {
-				m.aggregateResources(&minResources, &role.WorkerTemplate.Spec, expectReplicas)
+				minResources = m.aggregateResources(minResources, &role.WorkerTemplate.Spec, expectReplicas)
 			}
 		}
 	}
@@ -311,9 +286,9 @@ func (m *Manager) calculateRequirements(mi *workloadv1alpha1.ModelServing, podGr
 }
 
 // aggregateResources aggregates resource requirements from a pod spec
-func (m *Manager) aggregateResources(total *corev1.ResourceList, podSpec *corev1.PodSpec, replicas int) {
-	if *total == nil {
-		*total = corev1.ResourceList{}
+func (m *Manager) aggregateResources(total corev1.ResourceList, podSpec *corev1.PodSpec, replicas int) corev1.ResourceList {
+	if total == nil {
+		total = corev1.ResourceList{}
 	}
 
 	for _, container := range podSpec.Containers {
@@ -321,14 +296,16 @@ func (m *Manager) aggregateResources(total *corev1.ResourceList, podSpec *corev1
 			quantityCopy := quantity.DeepCopy()
 			quantityCopy.Mul(int64(replicas))
 
-			if existing, exists := (*total)[resourceName]; exists {
+			if existing, exists := total[resourceName]; exists {
 				existing.Add(quantityCopy)
-				(*total)[resourceName] = existing
+				total[resourceName] = existing
 			} else {
-				(*total)[resourceName] = quantityCopy
+				total[resourceName] = quantityCopy
 			}
 		}
 	}
+
+	return total
 }
 
 // GenerateTaskName generates task name
@@ -413,32 +390,29 @@ func (m *Manager) CleanupPodGroups(ctx context.Context, mi *workloadv1alpha1.Mod
 	return nil
 }
 
-// NeedHandledRoleNameList is used in Role scale up scenario to get the roleName list that need scale up.
+// calculateRequiredRoleNames is used in Role scale up scenario to get the roleName list that need scale up.
 // Therefore, the default value for `expectedReplicas` is greater than `length(RoleList)`.
 // Or the Role update scenario. (This scenario is This scenario is relatively rare. Since it is not permitted to modify an already configured gangPolicy,
 // and in practical applications, the workerReplicas within a deployed role are rarely altered.)
-func needHandledRoleNameList(expectedReplicas int, existRoleList []datastore.Role, roleName string) []string {
-	scaleUpRoleNameList := make([]string, 0)
-
+func calculateRequiredRoleNames(expectedReplicas int, existRoleList []datastore.Role, roleName string) []datastore.Role {
 	maxIndex := -1
-	for _, role := range existRoleList {
-		_, index := utils.GetParentNameAndOrdinal(role.Name)
-		scaleUpRoleNameList = append(scaleUpRoleNameList, role.Name)
-		if index > maxIndex {
-			maxIndex = index
-		}
+	if len(existRoleList) > 0 {
+		// As the existRoleList is already sorted in ascending order by index, the maxIndex represents the index of the last role.
+		_, maxIndex = utils.GetParentNameAndOrdinal(existRoleList[len(existRoleList)-1].Name)
 	}
 
-	toCreate := expectedReplicas - len(scaleUpRoleNameList)
+	toCreate := expectedReplicas - len(existRoleList)
 	if toCreate <= 0 {
-		return scaleUpRoleNameList
+		return existRoleList
 	}
 
 	for i := 0; i < toCreate; i++ {
 		newIndex := maxIndex + 1 + i
-		scaleUpRoleNameList = append(scaleUpRoleNameList, utils.GenerateRoleID(roleName, newIndex))
+		existRoleList = append(existRoleList, datastore.Role{
+			Name: utils.GenerateRoleID(roleName, newIndex),
+		})
 	}
-	return scaleUpRoleNameList
+	return existRoleList
 }
 
 // AnnotatePodWithPodGroup annotates a pod with the appropriate PodGroup information
@@ -454,6 +428,26 @@ func (m *Manager) AnnotatePodWithPodGroup(pod *corev1.Pod, mi *workloadv1alpha1.
 	// Add volcano annotation
 	pod.Annotations[schedulingv1beta1.KubeGroupNameAnnotationKey] = groupName
 	pod.Annotations[batchv1alpha1.TaskSpecKey] = taskName
+}
+
+// Helper function to handle PodGroup CRD changes
+func (m *Manager) handlePodGroupCRDChange(crd *apiextv1.CustomResourceDefinition, isDeleted bool) {
+	if isDeleted {
+		klog.Info("[CRD Deleted] PodGroup CRD removed")
+		m.hasPodGroupCRD.Store(false)
+		m.hasSubGroupPolicy.Store(false)
+		return
+	}
+
+	klog.Info("[CRD Added] PodGroup CRD detected")
+	m.hasPodGroupCRD.Store(true)
+	if podGroupCRDHasSubGroup(crd) {
+		klog.Info("[CRD Added] PodGroup CRD has subGroupPolicy feature")
+		m.hasSubGroupPolicy.Store(true)
+	} else {
+		klog.Info("[CRD Added] PodGroup CRD does not have subGroupPolicy feature")
+		m.hasSubGroupPolicy.Store(false)
+	}
 }
 
 func podGroupCRDHasSubGroup(crd *apiextv1.CustomResourceDefinition) bool {
@@ -484,35 +478,6 @@ func hasPodGroupChanged(current, updated *schedulingv1beta1.PodGroup) bool {
 		!reflect.DeepEqual(current.Spec.MinResources, updated.Spec.MinResources) ||
 		!reflect.DeepEqual(current.Spec.NetworkTopology, updated.Spec.NetworkTopology) ||
 		!reflect.DeepEqual(current.Spec.SubGroupPolicy, updated.Spec.SubGroupPolicy)
-}
-
-// neededHandlerPodGroupNameList returns the list of PodGroup names that need to be handled
-func neededHandledPodGroupNameList(expectedReplicas int, mi *workloadv1alpha1.ModelServing, servingGroupNameList []datastore.ServingGroup) []string {
-	// Changes to the PodGroup will not affect Pods that have already been deployed.
-	// During binpack scale down, it is unknown which ServingGroup will be deleted.
-	// Therefore, return all podGroup names that exist.
-	// Deletion of PodGroups is handled when ServingGroups are deleted.
-	maxIndex := -1
-	nameList := make([]string, 0)
-	for _, group := range servingGroupNameList {
-		_, index := utils.GetParentNameAndOrdinal(group.Name)
-		nameList = append(nameList, group.Name)
-		if index > maxIndex {
-			maxIndex = index
-		}
-	}
-
-	toCreate := expectedReplicas - len(nameList)
-	// Scale down. After the deletion of the servingGroup is completed, proceed to delete the PodGroup.
-	if toCreate <= 0 {
-		return nameList
-	}
-
-	for i := 0; i < toCreate; i++ {
-		newIndex := maxIndex + 1 + i
-		nameList = append(nameList, utils.GenerateServingGroupName(mi.GetName(), newIndex))
-	}
-	return nameList
 }
 
 func appendSubGroupPolicy(mi *workloadv1alpha1.ModelServing, podGroup *schedulingv1beta1.PodGroup, minRoleMember map[string]int32) *schedulingv1beta1.PodGroup {

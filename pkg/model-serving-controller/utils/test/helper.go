@@ -40,7 +40,6 @@ func CreatePodGroupCRD() *apiextv1.CustomResourceDefinition {
 					Name:    "v1beta1",
 					Served:  true,
 					Storage: true,
-					// 使用简化 schema
 					Schema: &apiextv1.CustomResourceValidation{
 						OpenAPIV3Schema: &apiextv1.JSONSchemaProps{
 							Type: "object",

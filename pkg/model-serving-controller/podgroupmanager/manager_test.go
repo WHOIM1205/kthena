@@ -92,10 +92,12 @@ func TestCalculateRequirements(t *testing.T) {
 		apiextfake := apiextfake.NewSimpleClientset(testhelper.CreatePodGroupCRD())
 		manager := NewManager(nil, nil, apiextfake, store)
 		mi := createBasicModelServing()
+		manager.hasPodGroupCRD.Store(true)
+		manager.hasSubGroupPolicy.Store(true)
 
 		// servingGroupName is used to find roleList.
 		// It will not affect the calculation of minTaskMember.
-		minMember, minRoleMember, minTaskMember, minResources := manager.calculateRequirements(mi, "test-serving-group")
+		minMember, minRoleMember, minTaskMember, _ := manager.calculateRequirements(mi, "test-serving-group")
 
 		// For 2 prefill roles (each with 1 entry + 3 workers) and 1 decode role (1 entry + 2 workers)
 		// Total pods = (1+3)*2 + (1+2)*1 = 8 + 3 = 11
@@ -107,8 +109,12 @@ func TestCalculateRequirements(t *testing.T) {
 			"decode":  3, // 1 entry + 2 workers
 		}
 		assert.Equal(t, expectedRoleMembers, minRoleMember)
+		expectedTaskMembers := map[string]int32{}
+		assert.Equal(t, expectedTaskMembers, minTaskMember)
 
-		expectedTaskMembers := map[string]int32{
+		manager.hasSubGroupPolicy.Store(false)
+		_, _, minTaskMember, minResources := manager.calculateRequirements(mi, "test-serving-group")
+		expectedTaskMembers = map[string]int32{
 			"prefill-0": 4, // 1 entry + 3 workers
 			"prefill-1": 4, // 1 entry + 3 workers
 			"decode-0":  3, // 1 entry + 2 workers
@@ -133,6 +139,8 @@ func TestCalculateRequirements(t *testing.T) {
 		apiextfake := apiextfake.NewSimpleClientset(testhelper.CreatePodGroupCRD())
 		manager := NewManager(nil, nil, apiextfake, store)
 		mi := createBasicModelServing()
+		manager.hasPodGroupCRD.Store(true)
+		manager.hasSubGroupPolicy.Store(true)
 
 		// Set MinRoleReplicas to limit the number of roles considered
 		minRoleReplicas := map[string]int32{
@@ -143,7 +151,7 @@ func TestCalculateRequirements(t *testing.T) {
 
 		// servingGroupName is used to find roleList.
 		// It will not affect the calculation of minTaskMember.
-		minMember, minRoleMember, minTaskMember, minResources := manager.calculateRequirements(mi, "test-serving-group")
+		minMember, minRoleMember, minTaskMember, _ := manager.calculateRequirements(mi, "test-serving-group")
 
 		// For 1 prefill role (1 entry + 3 workers) and 1 decode role (1 entry + 2 workers)
 		// Total pods = (1+3)*1 + (1+2)*1 = 4 + 3 = 7
@@ -155,8 +163,12 @@ func TestCalculateRequirements(t *testing.T) {
 			"decode":  3, // 1 entry + 2 workers
 		}
 		assert.Equal(t, expectedRoleMembers, minRoleMember)
+		expectedTaskMembers := map[string]int32{}
+		assert.Equal(t, expectedTaskMembers, minTaskMember)
 
-		expectedTaskMembers := map[string]int32{
+		manager.hasSubGroupPolicy.Store(false)
+		_, _, minTaskMember, minResources := manager.calculateRequirements(mi, "test-serving-group")
+		expectedTaskMembers = map[string]int32{
 			"prefill-0": 4, // 1 entry + 3 workers
 			"decode-0":  3, // 1 entry + 2 workers
 		}
@@ -181,6 +193,8 @@ func TestCalculateRequirements(t *testing.T) {
 		manager := NewManager(nil, nil, apiextfake, store)
 		mi := createBasicModelServing()
 		mi.Spec.Template.GangPolicy.MinRoleReplicas = nil
+		manager.hasPodGroupCRD.Store(true)
+		manager.hasSubGroupPolicy.Store(true)
 
 		// servingGroupName is used to find roleList.
 		// It will not affect the calculation of minTaskMember.
@@ -197,6 +211,8 @@ func TestCalculateRequirements(t *testing.T) {
 		manager := NewManager(nil, nil, apiextfake, store)
 		mi := createBasicModelServing()
 		mi.Spec.Template.Roles = []workloadv1alpha1.Role{} // Empty roles
+		manager.hasPodGroupCRD.Store(true)
+		manager.hasSubGroupPolicy.Store(true)
 
 		// servingGroupName is used to find roleList.
 		// It will not affect the calculation of minTaskMember.
@@ -214,6 +230,8 @@ func TestCalculateRequirements(t *testing.T) {
 		apiextfake := apiextfake.NewSimpleClientset(testhelper.CreatePodGroupCRD())
 		manager := NewManager(nil, nil, apiextfake, store)
 		mi := createBasicModelServing()
+		manager.hasPodGroupCRD.Store(true)
+		manager.hasSubGroupPolicy.Store(true)
 
 		// Modify one role to have no worker template
 		mi.Spec.Template.Roles[1].WorkerTemplate = nil
@@ -232,8 +250,12 @@ func TestCalculateRequirements(t *testing.T) {
 			"decode":  1, // 1 entry only (no workers)
 		}
 		assert.Equal(t, expectedRoleMembers, minRoleMember)
+		expectedTaskMembers := map[string]int32{}
+		assert.Equal(t, expectedTaskMembers, minTaskMember)
 
-		expectedTaskMembers := map[string]int32{
+		manager.hasSubGroupPolicy.Store(false)
+		_, _, minTaskMember, _ = manager.calculateRequirements(mi, "test-serving-group")
+		expectedTaskMembers = map[string]int32{
 			"prefill-0": 4, // 1 entry + 3 workers
 			"prefill-1": 4, // 1 entry + 3 workers
 			"decode-0":  1, // 1 entry only (no workers)
@@ -246,6 +268,8 @@ func TestCalculateRequirements(t *testing.T) {
 		apiextfake := apiextfake.NewSimpleClientset(testhelper.CreatePodGroupCRD())
 		manager := NewManager(nil, nil, apiextfake, store)
 		mi := createBasicModelServing()
+		manager.hasPodGroupCRD.Store(true)
+		manager.hasSubGroupPolicy.Store(true)
 
 		// Set worker replicas to zero for one role
 		mi.Spec.Template.Roles[0].WorkerReplicas = 0
@@ -264,8 +288,12 @@ func TestCalculateRequirements(t *testing.T) {
 			"decode":  3, // 1 entry + 2 workers
 		}
 		assert.Equal(t, expectedRoleMembers, minRoleMember)
+		expectedTaskMembers := map[string]int32{}
+		assert.Equal(t, expectedTaskMembers, minTaskMember)
 
-		expectedTaskMembers := map[string]int32{
+		manager.hasSubGroupPolicy.Store(false)
+		_, _, minTaskMember, _ = manager.calculateRequirements(mi, "test-serving-group")
+		expectedTaskMembers = map[string]int32{
 			"prefill-0": 1, // 1 entry only (no workers)
 			"prefill-1": 1, // 1 entry only (no workers)
 			"decode-0":  3, // 1 entry + 2 workers
@@ -304,7 +332,7 @@ func TestAggregateResources(t *testing.T) {
 			},
 		}
 
-		manager.aggregateResources(&total, podSpec, 1)
+		total = manager.aggregateResources(total, podSpec, 1)
 
 		expectedCPU := resource.MustParse("3")
 		expectedMemory := resource.MustParse("3Gi")
@@ -332,7 +360,7 @@ func TestAggregateResources(t *testing.T) {
 			},
 		}
 
-		manager.aggregateResources(&total, podSpec, 1)
+		total = manager.aggregateResources(total, podSpec, 1)
 
 		assert.NotNil(t, total)
 		assert.Len(t, total, 1)
@@ -349,7 +377,7 @@ func TestAggregateResources(t *testing.T) {
 			Containers: []corev1.Container{}, // Empty containers
 		}
 
-		manager.aggregateResources(&total, podSpec, 1)
+		total = manager.aggregateResources(total, podSpec, 1)
 
 		assert.Empty(t, total)
 	})
@@ -364,7 +392,7 @@ func TestAggregateResources(t *testing.T) {
 			Containers: nil, // Nil containers
 		}
 
-		manager.aggregateResources(&total, podSpec, 1)
+		total = manager.aggregateResources(total, podSpec, 1)
 
 		assert.Empty(t, total)
 	})
@@ -384,7 +412,7 @@ func TestAggregateResources(t *testing.T) {
 			},
 		}
 
-		manager.aggregateResources(&total, podSpec, 1)
+		total = manager.aggregateResources(total, podSpec, 1)
 
 		assert.Empty(t, total)
 	})
@@ -406,7 +434,7 @@ func TestAggregateResources(t *testing.T) {
 			},
 		}
 
-		manager.aggregateResources(&total, podSpec, 1)
+		total = manager.aggregateResources(total, podSpec, 1)
 
 		assert.Empty(t, total)
 	})
@@ -444,11 +472,11 @@ func TestAggregateResources(t *testing.T) {
 		}
 
 		// First call
-		manager.aggregateResources(&total, podSpec1, 1)
+		total = manager.aggregateResources(total, podSpec1, 1)
 		assert.True(t, resource.MustParse("1").Equal(total[corev1.ResourceCPU]))
 
 		// Second call
-		manager.aggregateResources(&total, podSpec2, 1)
+		total = manager.aggregateResources(total, podSpec2, 1)
 		assert.True(t, resource.MustParse("3").Equal(total[corev1.ResourceCPU]))
 	})
 
@@ -473,7 +501,7 @@ func TestAggregateResources(t *testing.T) {
 			},
 		}
 
-		manager.aggregateResources(&total, podSpec, 1)
+		total = manager.aggregateResources(total, podSpec, 1)
 
 		assert.Len(t, total, 3)
 		assert.True(t, resource.MustParse("1").Equal(total[corev1.ResourceCPU]))
@@ -502,7 +530,7 @@ func TestAggregateResources(t *testing.T) {
 			},
 		}
 
-		manager.aggregateResources(&total, podSpec, 1)
+		total = manager.aggregateResources(total, podSpec, 1)
 
 		// Should have 1+2=3 CPUs
 		assert.True(t, resource.MustParse("3").Equal(total[corev1.ResourceCPU]))
@@ -766,23 +794,23 @@ func TestHasPodGroupChanged(t *testing.T) {
 	})
 }
 
-func TestNeedHandledRoleNameList(t *testing.T) {
+func TestCalculateRequiredRoleNames(t *testing.T) {
 	tests := []struct {
 		name             string
 		expectedReplicas int
 		existRoleList    []datastore.Role
 		roleName         string
-		expectedResult   []string
+		expectedResult   []datastore.Role
 	}{
 		{
 			name:             "scale up from zero",
 			expectedReplicas: 3,
 			existRoleList:    []datastore.Role{},
 			roleName:         "test-role",
-			expectedResult: []string{
-				utils.GenerateRoleID("test-role", 0),
-				utils.GenerateRoleID("test-role", 1),
-				utils.GenerateRoleID("test-role", 2),
+			expectedResult: []datastore.Role{
+				{Name: utils.GenerateRoleID("test-role", 0)},
+				{Name: utils.GenerateRoleID("test-role", 1)},
+				{Name: utils.GenerateRoleID("test-role", 2)},
 			},
 		},
 		{
@@ -793,12 +821,12 @@ func TestNeedHandledRoleNameList(t *testing.T) {
 				{Name: utils.GenerateRoleID("test-role", 1)},
 			},
 			roleName: "test-role",
-			expectedResult: []string{
-				utils.GenerateRoleID("test-role", 0),
-				utils.GenerateRoleID("test-role", 1),
-				utils.GenerateRoleID("test-role", 2),
-				utils.GenerateRoleID("test-role", 3),
-				utils.GenerateRoleID("test-role", 4),
+			expectedResult: []datastore.Role{
+				{Name: utils.GenerateRoleID("test-role", 0)},
+				{Name: utils.GenerateRoleID("test-role", 1)},
+				{Name: utils.GenerateRoleID("test-role", 2)},
+				{Name: utils.GenerateRoleID("test-role", 3)},
+				{Name: utils.GenerateRoleID("test-role", 4)},
 			},
 		},
 		{
@@ -809,11 +837,11 @@ func TestNeedHandledRoleNameList(t *testing.T) {
 				{Name: utils.GenerateRoleID("test-role", 2)},
 			},
 			roleName: "test-role",
-			expectedResult: []string{
-				utils.GenerateRoleID("test-role", 0),
-				utils.GenerateRoleID("test-role", 2),
-				utils.GenerateRoleID("test-role", 3),
-				utils.GenerateRoleID("test-role", 4),
+			expectedResult: []datastore.Role{
+				{Name: utils.GenerateRoleID("test-role", 0)},
+				{Name: utils.GenerateRoleID("test-role", 2)},
+				{Name: utils.GenerateRoleID("test-role", 3)},
+				{Name: utils.GenerateRoleID("test-role", 4)},
 			},
 		},
 		{
@@ -824,120 +852,17 @@ func TestNeedHandledRoleNameList(t *testing.T) {
 				{Name: utils.GenerateRoleID("test-role", 11)},
 			},
 			roleName: "test-role",
-			expectedResult: []string{
-				utils.GenerateRoleID("test-role", 10),
-				utils.GenerateRoleID("test-role", 11),
-				utils.GenerateRoleID("test-role", 12),
+			expectedResult: []datastore.Role{
+				{Name: utils.GenerateRoleID("test-role", 10)},
+				{Name: utils.GenerateRoleID("test-role", 11)},
+				{Name: utils.GenerateRoleID("test-role", 12)},
 			},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := needHandledRoleNameList(tt.expectedReplicas, tt.existRoleList, tt.roleName)
-			assert.Equal(t, tt.expectedResult, result)
-		})
-	}
-}
-
-func TestNeededHandledPodGroupNameList(t *testing.T) {
-	testModelServing := &workloadv1alpha1.ModelServing{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "test-model",
-			Namespace: "default",
-		},
-		Spec: workloadv1alpha1.ModelServingSpec{
-			Replicas: ptr.To(int32(3)),
-		},
-	}
-
-	tests := []struct {
-		name             string
-		expectedReplicas int
-		modelServing     *workloadv1alpha1.ModelServing
-		servingGroupList []datastore.ServingGroup
-		expectedResult   []string
-	}{
-		{
-			name:             "scale down scenario - more existing groups than expected",
-			expectedReplicas: 2,
-			modelServing:     testModelServing,
-			servingGroupList: []datastore.ServingGroup{
-				{Name: utils.GenerateServingGroupName("test-model", 0)},
-				{Name: utils.GenerateServingGroupName("test-model", 1)},
-				{Name: utils.GenerateServingGroupName("test-model", 2)},
-				{Name: utils.GenerateServingGroupName("test-model", 3)},
-			},
-			expectedResult: []string{
-				utils.GenerateServingGroupName("test-model", 0),
-				utils.GenerateServingGroupName("test-model", 1),
-				utils.GenerateServingGroupName("test-model", 2),
-				utils.GenerateServingGroupName("test-model", 3),
-			},
-		},
-		{
-			name:             "scale up scenario - fewer existing groups than expected",
-			expectedReplicas: 4,
-			modelServing:     testModelServing,
-			servingGroupList: []datastore.ServingGroup{
-				{Name: utils.GenerateServingGroupName("test-model", 0)},
-				{Name: utils.GenerateServingGroupName("test-model", 1)},
-			},
-			expectedResult: []string{
-				utils.GenerateServingGroupName("test-model", 0),
-				utils.GenerateServingGroupName("test-model", 1),
-				utils.GenerateServingGroupName("test-model", 2),
-				utils.GenerateServingGroupName("test-model", 3),
-			},
-		},
-		{
-			name:             "equal scenario - existing groups equal to expected",
-			expectedReplicas: 3,
-			modelServing:     testModelServing,
-			servingGroupList: []datastore.ServingGroup{
-				{Name: utils.GenerateServingGroupName("test-model", 0)},
-				{Name: utils.GenerateServingGroupName("test-model", 1)},
-				{Name: utils.GenerateServingGroupName("test-model", 2)},
-			},
-			expectedResult: []string{
-				utils.GenerateServingGroupName("test-model", 0),
-				utils.GenerateServingGroupName("test-model", 1),
-				utils.GenerateServingGroupName("test-model", 2),
-			},
-		},
-		{
-			name:             "empty serving group list - pure scale up",
-			expectedReplicas: 3,
-			modelServing:     testModelServing,
-			servingGroupList: []datastore.ServingGroup{},
-			expectedResult: []string{
-				utils.GenerateServingGroupName("test-model", 0),
-				utils.GenerateServingGroupName("test-model", 1),
-				utils.GenerateServingGroupName("test-model", 2),
-			},
-		},
-		{
-			name:             "gap in indices",
-			expectedReplicas: 5,
-			modelServing:     testModelServing,
-			servingGroupList: []datastore.ServingGroup{
-				{Name: utils.GenerateServingGroupName("test-model", 0)},
-				{Name: utils.GenerateServingGroupName("test-model", 2)},
-				{Name: utils.GenerateServingGroupName("test-model", 4)},
-			},
-			expectedResult: []string{
-				utils.GenerateServingGroupName("test-model", 0),
-				utils.GenerateServingGroupName("test-model", 2),
-				utils.GenerateServingGroupName("test-model", 4),
-				utils.GenerateServingGroupName("test-model", 5),
-				utils.GenerateServingGroupName("test-model", 6),
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := neededHandledPodGroupNameList(tt.expectedReplicas, tt.modelServing, tt.servingGroupList)
+			result := calculateRequiredRoleNames(tt.expectedReplicas, tt.existRoleList, tt.roleName)
 			assert.Equal(t, tt.expectedResult, result)
 		})
 	}
