@@ -118,12 +118,8 @@ func TestMain(m *testing.M) {
 
 // TestModelCR creates a ModelBooster CR, waits for it to become active, and tests chat functionality.
 func TestModelCR(t *testing.T) {
-	ctx := context.Background()
-	// Initialize Kubernetes clients
-	config, err := utils.GetKubeConfig()
-	require.NoError(t, err, "Failed to get kubeconfig")
-	kthenaClient, err := clientset.NewForConfig(config)
-	require.NoError(t, err, "Failed to create kthena client")
+	ctx, kthenaClient := setupControllerManagerE2ETest(t)
+
 	// Create a Model CR in the test namespace
 	model := createTestModel()
 	createdModel, err := kthenaClient.WorkloadV1alpha1().ModelBoosters(testNamespace).Create(ctx, model, metav1.CreateOptions{})
@@ -150,15 +146,11 @@ func TestModelCR(t *testing.T) {
 
 // TestModelBoosterValidation tests that the webhook rejects invalid ModelBooster specs.
 func TestModelBoosterValidation(t *testing.T) {
-	ctx := context.Background()
-	config, err := utils.GetKubeConfig()
-	require.NoError(t, err, "Failed to get kubeconfig")
-	kthenaClient, err := clientset.NewForConfig(config)
-	require.NoError(t, err, "Failed to create kthena client")
+	ctx, kthenaClient := setupControllerManagerE2ETest(t)
 
 	// Create an invalid ModelBooster (minReplicas > maxReplicas) with DryRun
 	invalidModel := createInvalidModel()
-	_, err = kthenaClient.WorkloadV1alpha1().ModelBoosters(testNamespace).Create(ctx, invalidModel, metav1.CreateOptions{
+	_, err := kthenaClient.WorkloadV1alpha1().ModelBoosters(testNamespace).Create(ctx, invalidModel, metav1.CreateOptions{
 		DryRun: []string{"All"},
 	})
 	require.Error(t, err, "Expected validation error for invalid ModelBooster")
@@ -172,15 +164,11 @@ func TestModelBoosterValidation(t *testing.T) {
 
 // TestAutoscalingPolicyValidation tests that the webhook rejects invalid AutoscalingPolicy specs.
 func TestAutoscalingPolicyValidation(t *testing.T) {
-	ctx := context.Background()
-	config, err := utils.GetKubeConfig()
-	require.NoError(t, err, "Failed to get kubeconfig")
-	kthenaClient, err := clientset.NewForConfig(config)
-	require.NoError(t, err, "Failed to create kthena client")
+	ctx, kthenaClient := setupControllerManagerE2ETest(t)
 
 	// Create an invalid AutoscalingPolicy (duplicate metric names) with DryRun
 	invalidPolicy := createInvalidAutoscalingPolicy()
-	_, err = kthenaClient.WorkloadV1alpha1().AutoscalingPolicies(testNamespace).Create(ctx, invalidPolicy, metav1.CreateOptions{
+	_, err := kthenaClient.WorkloadV1alpha1().AutoscalingPolicies(testNamespace).Create(ctx, invalidPolicy, metav1.CreateOptions{
 		DryRun: []string{"All"},
 	})
 	require.Error(t, err, "Expected validation error for invalid AutoscalingPolicy")
@@ -193,11 +181,7 @@ func TestAutoscalingPolicyValidation(t *testing.T) {
 
 // TestAutoscalingPolicyMutation tests that the webhook defaults missing fields in AutoscalingPolicy.
 func TestAutoscalingPolicyMutation(t *testing.T) {
-	ctx := context.Background()
-	config, err := utils.GetKubeConfig()
-	require.NoError(t, err, "Failed to get kubeconfig")
-	kthenaClient, err := clientset.NewForConfig(config)
-	require.NoError(t, err, "Failed to create kthena client")
+	ctx, kthenaClient := setupControllerManagerE2ETest(t)
 
 	// Create an AutoscalingPolicy with empty behavior (should be defaulted) with DryRun
 	policy := createAutoscalingPolicyWithEmptyBehavior()
@@ -218,11 +202,7 @@ func TestAutoscalingPolicyMutation(t *testing.T) {
 
 // TestAutoscalingPolicyBindingValidation tests that the webhook validates AutoscalingPolicyBinding specs.
 func TestAutoscalingPolicyBindingValidation(t *testing.T) {
-	ctx := context.Background()
-	config, err := utils.GetKubeConfig()
-	require.NoError(t, err, "Failed to get kubeconfig")
-	kthenaClient, err := clientset.NewForConfig(config)
-	require.NoError(t, err, "Failed to create kthena client")
+	ctx, kthenaClient := setupControllerManagerE2ETest(t)
 
 	// First create a valid AutoscalingPolicy to reference (with DryRun)
 	policy := createValidAutoscalingPolicy()
@@ -244,15 +224,11 @@ func TestAutoscalingPolicyBindingValidation(t *testing.T) {
 
 // TestModelServingValidation tests that the webhook rejects invalid ModelServing specs.
 func TestModelServingValidation(t *testing.T) {
-	ctx := context.Background()
-	config, err := utils.GetKubeConfig()
-	require.NoError(t, err, "Failed to get kubeconfig")
-	kthenaClient, err := clientset.NewForConfig(config)
-	require.NoError(t, err, "Failed to create kthena client")
+	ctx, kthenaClient := setupControllerManagerE2ETest(t)
 
 	// Create an invalid ModelServing (negative replicas) with DryRun
 	invalidServing := createInvalidModelServing()
-	_, err = kthenaClient.WorkloadV1alpha1().ModelServings(testNamespace).Create(ctx, invalidServing, metav1.CreateOptions{
+	_, err := kthenaClient.WorkloadV1alpha1().ModelServings(testNamespace).Create(ctx, invalidServing, metav1.CreateOptions{
 		DryRun: []string{"All"},
 	})
 	require.Error(t, err, "Expected validation error for invalid ModelServing")
@@ -471,6 +447,16 @@ func createValidAutoscalingPolicyBinding(policyName string) *workload.Autoscalin
 			},
 		},
 	}
+}
+
+func setupControllerManagerE2ETest(t *testing.T) (context.Context, *clientset.Clientset) {
+	t.Helper()
+	ctx := context.Background()
+	config, err := utils.GetKubeConfig()
+	require.NoError(t, err, "Failed to get kubeconfig")
+	kthenaClient, err := clientset.NewForConfig(config)
+	require.NoError(t, err, "Failed to create kthena client")
+	return ctx, kthenaClient
 }
 
 func createInvalidModelServing() *workload.ModelServing {
