@@ -46,11 +46,11 @@ func TestMain(m *testing.M) {
 	config.NetworkingEnabled = true
 	config.GatewayAPIEnabled = true
 	config.InferenceExtensionEnabled = true
-	/*
-		if err := framework.InstallKthena(config); err != nil {
-			fmt.Printf("Failed to install kthena: %v\n", err)
-			os.Exit(1)
-		}*/
+
+	if err := framework.InstallKthena(config); err != nil {
+		fmt.Printf("Failed to install kthena: %v\n", err)
+		os.Exit(1)
+	}
 
 	var err error
 	testCtx, err = routercontext.NewRouterTestContext(testNamespace)
@@ -82,10 +82,10 @@ func TestMain(m *testing.M) {
 	if err := testCtx.DeleteTestNamespace(); err != nil {
 		fmt.Printf("Failed to delete test namespace: %v\n", err)
 	}
-	/*
-		if err := framework.UninstallKthena(config.Namespace); err != nil {
-			fmt.Printf("Failed to uninstall kthena: %v\n", err)
-		}*/
+
+	if err := framework.UninstallKthena(config.Namespace); err != nil {
+		fmt.Printf("Failed to uninstall kthena: %v\n", err)
+	}
 
 	os.Exit(code)
 }
@@ -145,8 +145,16 @@ func TestBothAPIsConfigured(t *testing.T) {
 
 	// 1. Deploy ModelRoute and ModelServer for ModelRoute/ModelServer API
 	t.Log("Deploying ModelRoute...")
-	modelRoute := utils.LoadYAMLFromFile[networkingv1alpha1.ModelRoute]("examples/kthena-router/ModelRouteSimple.yaml")
+	modelRoute := utils.LoadYAMLFromFile[networkingv1alpha1.ModelRoute]("examples/kthena-router/ModelRoute-binding-gateway.yaml")
 	modelRoute.Namespace = testNamespace
+
+	// Update parentRefs to point to the kthena installation namespace
+	ktNamespace := gatewayv1.Namespace(kthenaNamespace)
+	if len(modelRoute.Spec.ParentRefs) > 0 {
+		for i := range modelRoute.Spec.ParentRefs {
+			modelRoute.Spec.ParentRefs[i].Namespace = &ktNamespace
+		}
+	}
 
 	createdModelRoute, err := testCtx.KthenaClient.NetworkingV1alpha1().ModelRoutes(testNamespace).Create(ctx, modelRoute, metav1.CreateOptions{})
 	require.NoError(t, err, "Failed to create ModelRoute")
@@ -199,8 +207,8 @@ func TestBothAPIsConfigured(t *testing.T) {
 	httpRoute.Namespace = testNamespace
 	httpRoute.Name = "llm-route-7b"
 
-	// Update parentRefs to point to the kthena installation namespace
-	ktNamespace := gatewayv1.Namespace(kthenaNamespace)
+	// Update parentRefs to point to the kthena installation namespace (reuse ktNamespace from above)
+	ktNamespace = gatewayv1.Namespace(kthenaNamespace)
 	if len(httpRoute.Spec.ParentRefs) > 0 {
 		for i := range httpRoute.Spec.ParentRefs {
 			httpRoute.Spec.ParentRefs[i].Namespace = &ktNamespace
