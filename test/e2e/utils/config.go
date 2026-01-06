@@ -18,15 +18,16 @@ package utils
 
 import (
 	"fmt"
+	"io"
 	"math/rand"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 
+	"k8s.io/apimachinery/pkg/util/yaml"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
-	"sigs.k8s.io/yaml"
 )
 
 // GetKubeConfig returns a Kubernetes REST config.
@@ -77,23 +78,23 @@ func LoadMultiResourceYAMLFromFile[T any](path string) []*T {
 		panic(fmt.Sprintf("Failed to read YAML file from project root: %s (abs: %s): %v", path, absPath, err))
 	}
 
-	// Split by "---" to get individual resources
-	docs := strings.Split(string(data), "---")
+	// Use NewYAMLOrJSONDecoder to safely parse multi-document YAML files
+	// This follows the same approach as kubectl and handles "---" delimiters correctly
+	decoder := yaml.NewYAMLOrJSONDecoder(strings.NewReader(string(data)), 1024)
 	var results []*T
+	resourceIndex := 0
 
-	for i, doc := range docs {
-		doc = strings.TrimSpace(doc)
-		if doc == "" {
-			continue
-		}
-
-		// Use the same logic as LoadYAMLFromFile for each resource
+	for {
 		var obj T
-		if err := yaml.Unmarshal([]byte(doc), &obj); err != nil {
-			panic(fmt.Sprintf("Failed to unmarshal YAML resource %d in file: %s: %v", i+1, absPath, err))
+		if err := decoder.Decode(&obj); err != nil {
+			if err == io.EOF {
+				break
+			}
+			panic(fmt.Sprintf("Failed to decode YAML resource %d in file: %s: %v", resourceIndex+1, absPath, err))
 		}
 
 		results = append(results, &obj)
+		resourceIndex++
 	}
 
 	return results
