@@ -69,6 +69,16 @@ For more details, please refer to [Kthena Architecture](https://kthena.volcano.s
 
 Get up and running with Kthena in minutes. This [guide](docs/kthena/docs/getting-started/quick-start.md) will walk you through installing the platform and deploying your first LLM model.
 
+### Install from code
+
+If you don't have a kubernetes cluster, try one-click install from code base:
+
+```bash
+./hack/local-up-kthena.sh
+```
+
+Run `./hack/local-up-kthena.sh --help` for more options.
+
 ## Community
 
 Kthena is an open source project that welcomes contributions from developers, platform engineers, and AI practitioners.
