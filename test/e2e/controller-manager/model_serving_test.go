@@ -107,27 +107,31 @@ func TestModelServingPodRecovery(t *testing.T) {
 	// Wait until ModelServing is ready
 	utils.WaitForModelServingReady(t, ctx, kthenaClient, testNamespace, modelServing.Name)
 
-	// List pods created by the ModelServing
-	podList, err := kubeClient.
-		CoreV1().
-		Pods(testNamespace).
-		List(ctx, metav1.ListOptions{})
-	require.NoError(t, err, "Failed to list pods")
-	require.NotEmpty(t, podList.Items, "No pods found for ModelServing")
+	// Wait until any pod exists in the test namespace
+	var originalPod *corev1.Pod
+	require.Eventually(t, func() bool {
+		podList, err := kubeClient.
+			CoreV1().
+			Pods(testNamespace).
+			List(ctx, metav1.ListOptions{})
+		if err != nil || len(podList.Items) == 0 {
+			return false
+		}
+		originalPod = &podList.Items[0]
+		return true
+	}, 2*time.Minute, 5*time.Second, "No pods found in test namespace")
 
-	originalPod := podList.Items[0]
-	originalUID := originalPod.UID
-
-	t.Logf("Deleting pod %s (UID=%s)", originalPod.Name, originalUID)
+	originalPodName := originalPod.Name
+	t.Logf("Deleting pod %s", originalPodName)
 
 	// Delete the pod
 	err = kubeClient.
 		CoreV1().
 		Pods(testNamespace).
-		Delete(ctx, originalPod.Name, metav1.DeleteOptions{})
+		Delete(ctx, originalPodName, metav1.DeleteOptions{})
 	require.NoError(t, err, "Failed to delete pod")
 
-	// Wait for a new pod to be recreated
+	// Wait for a new pod with a different name to reach Running state
 	require.Eventually(t, func() bool {
 		pods, err := kubeClient.
 			CoreV1().
@@ -137,8 +141,8 @@ func TestModelServingPodRecovery(t *testing.T) {
 			return false
 		}
 		for _, pod := range pods.Items {
-			if pod.UID != originalUID {
-				return pod.Status.Phase == corev1.PodRunning
+			if pod.Name != originalPodName && pod.Status.Phase == corev1.PodRunning {
+				return true
 			}
 		}
 		return false
@@ -171,29 +175,29 @@ func TestModelServingServiceRecovery(t *testing.T) {
 	// Wait until ModelServing is ready
 	utils.WaitForModelServingReady(t, ctx, kthenaClient, testNamespace, modelServing.Name)
 
-	// Try to find a Service created for ModelServing (may or may not exist)
-	svcList, err := kubeClient.
+	// List all Services in the test namespace
+	serviceList, err := kubeClient.
 		CoreV1().
 		Services(testNamespace).
 		List(ctx, metav1.ListOptions{})
-	require.NoError(t, err, "Failed to list services")
+	require.NoError(t, err, "Failed to list Services in namespace")
 
+	// Try to find a headless Service (Spec.ClusterIP == ClusterIPNone)
 	var originalService *corev1.Service
-	for i := range svcList.Items {
-		// Any service created by ModelServing / Role is acceptable
-		if svcList.Items[i].Spec.ClusterIP != "" {
-			originalService = &svcList.Items[i]
+	var originalServiceUID string
+	for _, svc := range serviceList.Items {
+		if svc.Spec.ClusterIP == corev1.ClusterIPNone {
+			originalService = &svc
+			originalServiceUID = string(svc.UID)
 			break
 		}
 	}
 
-	// If no Service exists, recovery is not applicable
+	// If no headless Service exists, gracefully skip the test
 	if originalService == nil {
-		t.Log("No Service created for ModelServing, skipping service recovery test")
-		return
+		t.Log("No headless Service created for ModelServing, skipping service recovery test")
+		t.Skip()
 	}
-
-	originalUID := originalService.UID
 
 	t.Logf("Deleting headless Service %s", originalService.Name)
 
@@ -204,17 +208,17 @@ func TestModelServingServiceRecovery(t *testing.T) {
 		Delete(ctx, originalService.Name, metav1.DeleteOptions{})
 	require.NoError(t, err, "Failed to delete headless Service")
 
-	// Wait for a new headless Service to be recreated (name may differ)
+	// Wait for a new headless Service with a different UID to appear
 	require.Eventually(t, func() bool {
-		svcList, err := kubeClient.
+		serviceList, err := kubeClient.
 			CoreV1().
 			Services(testNamespace).
 			List(ctx, metav1.ListOptions{})
 		if err != nil {
 			return false
 		}
-		for _, svc := range svcList.Items {
-			if svc.Spec.ClusterIP == corev1.ClusterIPNone && svc.UID != originalUID {
+		for _, svc := range serviceList.Items {
+			if svc.Spec.ClusterIP == corev1.ClusterIPNone && string(svc.UID) != originalServiceUID {
 				return true
 			}
 		}
