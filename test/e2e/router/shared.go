@@ -492,6 +492,16 @@ func TestModelRouteWithRateLimitShared(t *testing.T, testCtx *routercontext.Rout
 			return err == nil && mr != nil
 		}, 2*time.Minute, 2*time.Second, "ModelRoute should be created")
 
+		// Ensure the referenced ModelServer exists (without consuming tokens)
+		require.Eventually(t, func() bool {
+			_, err := testCtx.KthenaClient.NetworkingV1alpha1().ModelServers(testNamespace).Get(ctx, "deepseek-r1-1-5b", metav1.GetOptions{})
+			return err == nil
+		}, 1*time.Minute, 2*time.Second, "Referenced ModelServer should exist")
+
+		// Give router time to discover and reconcile the ModelRoute
+		t.Log("Waiting for router to reconcile ModelRoute...")
+		time.Sleep(10 * time.Second)
+
 		// Calculate expected successful requests
 		expectedSuccessfulRequests := inputTokenLimit / tokensPerRequest
 		if expectedSuccessfulRequests == 0 {
