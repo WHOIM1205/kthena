@@ -118,7 +118,7 @@ func TestModelServingPodRecovery(t *testing.T) {
 	utils.WaitForModelServingReady(t, ctx, kthenaClient, testNamespace, modelServing.Name)
 
 	// List pods using label selector scoped to the current ModelServing instance
-	labelSelector := "kthena.volcano.sh/model-serving-name=" + modelServing.Name
+	labelSelector := "modelserving.volcano.sh/name=" + modelServing.Name
 	podList, err := kubeClient.CoreV1().Pods(testNamespace).List(ctx, metav1.ListOptions{
 		LabelSelector: labelSelector,
 	})
@@ -208,7 +208,7 @@ func TestModelServingServiceRecovery(t *testing.T) {
 	require.NoError(t, err, "Failed to get ModelServing")
 
 	// List Services with label selector scoped to the current ModelServing
-	labelSelector := "kthena.volcano.sh/model-serving-name=" + modelServing.Name
+	labelSelector := "modelserving.volcano.sh/name=" + modelServing.Name
 	serviceList, err := kubeClient.CoreV1().Services(testNamespace).List(ctx, metav1.ListOptions{
 		LabelSelector: labelSelector,
 	})
