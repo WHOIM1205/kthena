@@ -746,7 +746,7 @@ func (c *ModelServingController) scaleUpRoles(ctx context.Context, ms *workloadv
 		return
 	}
 
-	klog.V(2).Infof("Scaling up role %s in ServingGroup %s: creating %d new replicas", targetRole.Name, groupName, toCreate)
+	klog.V(2).Infof("scaling up role %s in ServingGroup %s: creating %d new replicas", targetRole.Name, groupName, toCreate)
 	// Create new Roles with increasing indices
 	for i := 0; i < toCreate; i++ {
 		newIndex := startingIndex + i
@@ -775,43 +775,40 @@ func (c *ModelServingController) manageRoleReplicas(ctx context.Context, ms *wor
 	// TODO: need to check the pod spec match the modelserving spec, if not, recreate the pod
 
 	expectedCount := int(*targetRole.Replicas)
-	if len(roleList) == expectedCount {
-		expectedPods := 1 + int(targetRole.WorkerReplicas)
-		for _, roleObj := range roleList {
-			if roleObj.Status == datastore.RoleDeleting {
-				continue
-			}
-			roleIDValue := fmt.Sprintf("%s/%s/%s/%s", ms.Namespace, groupName, targetRole.Name, roleObj.Name)
-			pods, err := c.getPodsByIndex(RoleIDKey, roleIDValue)
-			if err != nil {
-				klog.Warningf("failed to list pods for role %s/%s in ServingGroup %s: %v", targetRole.Name, roleObj.Name, groupName, err)
-				continue
-			}
-			for _, pod := range pods {
-				if !isOwnedByModelServingWithUID(pod, ms.UID) {
-					// If the pod is not owned by the ModelServing, we do not need to handle it.
-					klog.Infof("pod %s/%s maybe left from previous same named ModelServing %s/%s, reenqueue ModelServing for reconcile",
-						pod.Namespace, pod.Name, ms.Namespace, ms.Name)
-					c.enqueueModelServingAfter(ms, 1*time.Second)
-					break
-				}
-			}
-			if len(pods) < expectedPods {
-				klog.V(2).Infof("role %s/%s in ServingGroup %s is missing pods (%d/%d), recreating", targetRole.Name, roleObj.Name, groupName, len(pods), expectedPods)
-				_, roleIndex := utils.GetParentNameAndOrdinal(roleObj.Name)
-				if err := c.CreatePodsByRole(ctx, *targetRole.DeepCopy(), ms, roleIndex, servingGroupOrdinal, newRevision); err != nil {
-					klog.Errorf("failed to recreate pods for role %s/%s in ServingGroup %s: %v", targetRole.Name, roleObj.Name, groupName, err)
-				}
+	expectedPods := 1 + int(targetRole.WorkerReplicas)
+	for _, roleObj := range roleList {
+		if roleObj.Status == datastore.RoleDeleting {
+			continue
+		}
+		roleIDValue := fmt.Sprintf("%s/%s/%s/%s", ms.Namespace, groupName, targetRole.Name, roleObj.Name)
+		pods, err := c.getPodsByIndex(RoleIDKey, roleIDValue)
+		if err != nil {
+			klog.Warningf("failed to list pods for role %s/%s in ServingGroup %s: %v", targetRole.Name, roleObj.Name, groupName, err)
+			continue
+		}
+		for _, pod := range pods {
+			if !isOwnedByModelServingWithUID(pod, ms.UID) {
+				// If the pod is not owned by the ModelServing, we do not need to handle it.
+				klog.Infof("pod %s/%s maybe left from previous same named ModelServing %s/%s, reenqueue ModelServing for reconcile",
+					pod.Namespace, pod.Name, ms.Namespace, ms.Name)
+				c.enqueueModelServingAfter(ms, 1*time.Second)
+				break
 			}
 		}
-		return
+		if len(pods) < expectedPods {
+			klog.V(2).Infof("role %s/%s in ServingGroup %s is missing pods (%d/%d), recreating", targetRole.Name, roleObj.Name, groupName, len(pods), expectedPods)
+			_, roleIndex := utils.GetParentNameAndOrdinal(roleObj.Name)
+			if err := c.CreatePodsByRole(ctx, *targetRole.DeepCopy(), ms, roleIndex, servingGroupOrdinal, newRevision); err != nil {
+				klog.Errorf("failed to recreate pods for role %s/%s in ServingGroup %s: %v", targetRole.Name, roleObj.Name, groupName, err)
+			}
+		}
 	}
 
-	// Determsne whether it is a scale-up or scale-down scenario
+	// Determine whether it is a scale-up or scale-down scenario
 	if len(roleList) < expectedCount {
 		// Handle scale up by calling scaleUpRoles
 		c.scaleUpRoles(ctx, ms, groupName, targetRole, roleList, expectedCount, servingGroupOrdinal, newRevision)
-	} else {
+	} else if len(roleList) > expectedCount {
 		// Handle scale down by calling scaleDownRoles
 		c.scaleDownRoles(ctx, ms, groupName, targetRole, roleList, expectedCount)
 	}
@@ -1283,7 +1280,7 @@ func (c *ModelServingController) handleDeletionInProgress(ms *workloadv1alpha1.M
 func (c *ModelServingController) isServingGroupDeleted(ms *workloadv1alpha1.ModelServing, servingGroupName string) bool {
 	status := c.store.GetServingGroupStatus(utils.GetNamespaceName(ms), servingGroupName)
 	if status != datastore.ServingGroupDeleting {
-		// It will be determsned whether all resource have been deleted only when the group status is deleting.
+		// It will be Determined whether all resource have been deleted only when the group status is deleting.
 		return false
 	}
 	// check whether the ServingGroup deletion has been completed
@@ -1303,7 +1300,7 @@ func (c *ModelServingController) isServingGroupDeleted(ms *workloadv1alpha1.Mode
 
 func (c *ModelServingController) isRoleDeleted(ms *workloadv1alpha1.ModelServing, servingGroupName, roleName, roleID string) bool {
 	if c.store.GetRoleStatus(utils.GetNamespaceName(ms), servingGroupName, roleName, roleID) != datastore.RoleDeleting {
-		// It will be determsned whether all resource have been deleted only when the role status is deleting.
+		// It will be Determined whether all resource have been deleted only when the role status is deleting.
 		return false
 	}
 	roleIDValue := fmt.Sprintf("%s/%s/%s/%s", ms.Namespace, servingGroupName, roleName, roleID)
