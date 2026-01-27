@@ -385,6 +385,16 @@ func (c *ModelServingController) enqueueModelServing(ms *workloadv1alpha1.ModelS
 	c.workqueue.Add(key)
 }
 
+func (c *ModelServingController) enqueueModelServingAfter(ms *workloadv1alpha1.ModelServing, duration time.Duration) {
+	var key string
+	var err error
+	if key, err = cache.MetaNamespaceKeyFunc(ms); err != nil {
+		utilruntime.HandleError(err)
+		return
+	}
+	c.workqueue.AddAfter(key, duration)
+}
+
 func (c *ModelServingController) worker(ctx context.Context) {
 	for c.processNextWorkItem(ctx) {
 	}
@@ -776,6 +786,15 @@ func (c *ModelServingController) manageRoleReplicas(ctx context.Context, ms *wor
 			if err != nil {
 				klog.Warningf("failed to list pods for role %s/%s in ServingGroup %s: %v", targetRole.Name, roleObj.Name, groupName, err)
 				continue
+			}
+			for _, pod := range pods {
+				if !isOwnedByModelServingWithUID(pod, ms.UID) {
+					// If the pod is not owned by the ModelServing, we do not need to handle it.
+					klog.Infof("pod %s/%s maybe left from previous same named ModelServing %s/%s, reenqueue ModelServing for reconcile",
+						pod.Namespace, pod.Name, ms.Namespace, ms.Name)
+					c.enqueueModelServingAfter(ms, 1*time.Second)
+					break
+				}
 			}
 			if len(pods) < expectedPods {
 				klog.V(2).Infof("role %s/%s in ServingGroup %s is missing pods (%d/%d), recreating", targetRole.Name, roleObj.Name, groupName, len(pods), expectedPods)
@@ -1175,11 +1194,11 @@ func (c *ModelServingController) getModelServingByChildResource(resource metav1.
 
 // shouldSkipPodHandling checks if a pod should be skipped based on owner mismatch or revision mismatch
 func (c *ModelServingController) shouldSkipPodHandling(ms *workloadv1alpha1.ModelServing, servingGroupName string, pod *corev1.Pod) bool {
-	for _, ownerRef := range pod.GetOwnerReferences() {
-		if ownerRef.APIVersion == workloadv1alpha1.SchemeGroupVersion.String() && ownerRef.Kind == "ModelServing" &&
-			ownerRef.UID != ms.UID {
-			return true
-		}
+	if !isOwnedByModelServingWithUID(pod, ms.UID) {
+		// If the pod is not owned by the ModelServing, we do not need to handle it.
+		klog.V(4).Infof("pod %s/%s maybe left from previous same named ModelServing %s/%s, skip handling",
+			pod.Namespace, pod.Name, ms.Namespace, ms.Name)
+		return true
 	}
 
 	podRevision := utils.PodRevision(pod)
@@ -1214,6 +1233,17 @@ func getMetaObject(obj interface{}) metav1.Object {
 func isOwnedByModelServing(metaObj metav1.Object) bool {
 	for _, ownerRef := range metaObj.GetOwnerReferences() {
 		if ownerRef.APIVersion == workloadv1alpha1.SchemeGroupVersion.String() && ownerRef.Kind == "ModelServing" {
+			return true
+		}
+	}
+	return false
+}
+
+func isOwnedByModelServingWithUID(obj metav1.Object, uid types.UID) bool {
+	for _, ownerRef := range obj.GetOwnerReferences() {
+		if ownerRef.APIVersion == workloadv1alpha1.SchemeGroupVersion.String() &&
+			ownerRef.Kind == "ModelServing" &&
+			ownerRef.UID == uid {
 			return true
 		}
 	}
