@@ -286,11 +286,6 @@ func (c *ModelServingController) updatePod(_, newObj interface{}) {
 			klog.Errorf("handle running pod failed: %v", err)
 		}
 	case utils.IsPodFailed(newPod) || utils.ContainerRestarted(newPod):
-		// handleErrorPod is not called until modelServing has been called.
-		if !c.initialSync {
-			return
-		}
-		// Failure occurs in pod and we need to wait for a grace period before making a judgment.
 		err = c.handleErrorPod(ms, servingGroupName, newPod)
 		if err != nil {
 			klog.Errorf("handle error pod failed: %v", err)
@@ -496,6 +491,7 @@ func (c *ModelServingController) syncAll() {
 	if err != nil {
 		klog.Errorf("failed to list pods: %v", err)
 	}
+
 	for _, pod := range pods {
 		c.addPod(pod)
 	}
@@ -507,6 +503,7 @@ func (c *ModelServingController) syncAll() {
 	for _, ms := range modelServings {
 		c.addModelServing(ms)
 	}
+
 	c.initialSync = true
 }
 
