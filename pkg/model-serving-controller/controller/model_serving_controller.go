@@ -408,7 +408,7 @@ func (c *ModelServingController) deleteService(obj interface{}) {
 func (c *ModelServingController) deletePodGroup(obj interface{}) {
 	pg, ok := obj.(*schedulingv1beta1.PodGroup)
 	if !ok {
-		// If the object is not a PodGroup, it msght be a tombstone object.
+		// If the object is not a PodGroup, it might be a tombstone object.
 		tombstone, ok := obj.(cache.DeletedFinalStateUnknown)
 		if !ok {
 			klog.Error("failed to parse podgroup type when deletePodGroup")
@@ -558,20 +558,6 @@ func (c *ModelServingController) Run(ctx context.Context, workers int) {
 	}
 	<-ctx.Done()
 	klog.Info("shut down modelServing controller")
-}
-
-// resyncAllModelServings triggers a resync of all model servings
-// to createOrUpdate PodGroup if needed when PodGroup CRD becomes available.
-func (c *ModelServingController) resyncAllModelServings() {
-	modelServings, err := c.modelServingLister.List(labels.Everything())
-	if err != nil {
-		klog.Errorf("failed to list model servings for resync: %v", err)
-		return
-	}
-
-	for _, ms := range modelServings {
-		c.enqueueModelServing(ms)
-	}
 }
 
 func (c *ModelServingController) syncAll() {
@@ -1313,7 +1299,7 @@ func (c *ModelServingController) shouldSkipHandling(ms *workloadv1alpha1.ModelSe
 	}
 
 	revision := utils.ObjectRevision(obj)
-	// Headless Service and PodGroup are not have revision label.
+	// Headless Service and PodGroup do not have revision label.
 	// And Rolling updates do not affect Headless Services or podGroups.
 	if revision == "" {
 		_, ok := obj.(*corev1.Pod)

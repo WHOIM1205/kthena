@@ -284,17 +284,17 @@ func CheckPodRevision(pod *corev1.Pod, revision string) bool {
 	return podRevision == revision
 }
 
-// ObjectRevision returns the revision label of the reource.
+// ObjectRevision returns the revision label of the resource.
 func ObjectRevision(obj metav1.Object) string {
 	return obj.GetLabels()[workloadv1alpha1.RevisionLabelKey]
 }
 
-// GetRoleName returns the role name of the pod.
+// GetRoleName returns the role name of the resource.
 func GetRoleName(resource metav1.Object) string {
 	return resource.GetLabels()[workloadv1alpha1.RoleLabelKey]
 }
 
-// GetRoleID returns the role id of the pod.
+// GetRoleID returns the role id of the resource.
 func GetRoleID(resource metav1.Object) string {
 	return resource.GetLabels()[workloadv1alpha1.RoleIDKey]
 }

@@ -167,6 +167,10 @@ func (m *Manager) Run(parentCtx context.Context) error {
 	if !cache.WaitForCacheSync(parentCtx.Done(), m.CrdInformer.HasSynced) {
 		return fmt.Errorf("failed to sync PodGroup CRD informer cache")
 	}
+	if !m.hasPodGroupCRD.Load() {
+		klog.Info("PodGroup CRD is not found, skipping PodGroup informer initialization")
+		return nil
+	}
 
 	return m.initPodGroupInformer()
 }
@@ -215,6 +219,7 @@ func (m *Manager) stopPodGroupInformer() {
 		m.podGroupInformerCancel()
 		m.podGroupInformerCancel = nil
 		m.PodGroupInformer = nil
+		m.PodGroupLister = nil
 	}
 }
 
@@ -227,6 +232,9 @@ func (m *Manager) CreateOrUpdatePodGroup(ctx context.Context, ms *workloadv1alph
 	}
 
 	podgroupLister := m.GetPodGroupLister()
+	if podgroupLister == nil {
+		return fmt.Errorf("PodGroup informer is not initialized"), 1 * time.Second
+	}
 	podGroup, err := podgroupLister.PodGroups(ms.Namespace).Get(pgName)
 	if err != nil {
 		if !apierrors.IsNotFound(err) {
