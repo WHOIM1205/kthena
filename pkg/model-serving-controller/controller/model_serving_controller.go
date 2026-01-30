@@ -560,20 +560,6 @@ func (c *ModelServingController) Run(ctx context.Context, workers int) {
 	klog.Info("shut down modelServing controller")
 }
 
-// resyncAllModelServings triggers a resync of all model servings
-// to createOrUpdate PodGroup if needed when PodGroup CRD becomes available.
-func (c *ModelServingController) resyncAllModelServings() {
-	modelServings, err := c.modelServingLister.List(labels.Everything())
-	if err != nil {
-		klog.Errorf("failed to list model servings for resync: %v", err)
-		return
-	}
-
-	for _, ms := range modelServings {
-		c.enqueueModelServing(ms)
-	}
-}
-
 func (c *ModelServingController) syncAll() {
 	pods, err := c.podsLister.List(labels.Everything())
 	if err != nil {
@@ -1484,7 +1470,7 @@ func (c *ModelServingController) getServicesByIndex(indexName, indexValue string
 	return services, nil
 }
 
-// TODO: Refactor these three functions to a single function.
+// TODO: move to podgroup manager
 func (c *ModelServingController) getPodGroupsByIndex(indexName, indexValue string) ([]*schedulingv1beta1.PodGroup, error) {
 	if c.podGroupManager == nil || !c.podGroupManager.HasPodGroupCRD() {
 		return nil, nil
