@@ -38,6 +38,7 @@ import (
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/utils/ptr"
 	volcanofake "volcano.sh/apis/pkg/client/clientset/versioned/fake"
+	volcanoinformers "volcano.sh/apis/pkg/client/informers/externalversions"
 
 	kthenafake "github.com/volcano-sh/kthena/client-go/clientset/versioned/fake"
 	informersv1alpha1 "github.com/volcano-sh/kthena/client-go/informers/externalversions"
@@ -240,10 +241,14 @@ func TestIsServingGroupDeleted(t *testing.T) {
 	groupName := "test-ms-0"
 	otherGroupName := "other-group"
 
+	// TODO: Add a Test Helper to setup controller test environment
 	kubeClient := kubefake.NewSimpleClientset()
+	volcanoClient := volcanofake.NewSimpleClientset()
 	kubeInformerFactory := informers.NewSharedInformerFactory(kubeClient, 0)
 	podInformer := kubeInformerFactory.Core().V1().Pods()
 	serviceInformer := kubeInformerFactory.Core().V1().Services()
+	podGroupInformerFactory := volcanoinformers.NewSharedInformerFactory(volcanoClient, 0)
+	podGroupInformer := podGroupInformerFactory.Scheduling().V1beta1().PodGroups()
 
 	err := podInformer.Informer().AddIndexers(cache.Indexers{
 		GroupNameKey: utils.GroupNameIndexFunc,
@@ -257,12 +262,23 @@ func TestIsServingGroupDeleted(t *testing.T) {
 	})
 	assert.NoError(t, err)
 
+	err = podGroupInformer.Informer().AddIndexers(cache.Indexers{
+		GroupNameKey: utils.GroupNameIndexFunc,
+	})
+	assert.NoError(t, err)
+
 	store := datastore.New()
+	manager := podgroupmanager.NewManager(kubeClient, volcanoClient, apiextfake.NewSimpleClientset(testhelper.CreatePodGroupCRD()), store, nil)
+	if manager != nil {
+		manager.PodGroupInformer = podGroupInformer.Informer()
+		manager.PodGroupLister = podGroupInformer.Lister()
+	}
 	controller := &ModelServingController{
 		podsInformer:     podInformer.Informer(),
 		servicesInformer: serviceInformer.Informer(),
 		podsLister:       podInformer.Lister(),
 		servicesLister:   serviceInformer.Lister(),
+		podGroupManager:  manager,
 		store:            store,
 	}
 
@@ -270,6 +286,8 @@ func TestIsServingGroupDeleted(t *testing.T) {
 	defer close(stop)
 	kubeInformerFactory.Start(stop)
 	kubeInformerFactory.WaitForCacheSync(stop)
+	podGroupInformerFactory.Start(stop)
+	podGroupInformerFactory.WaitForCacheSync(stop)
 
 	ms := &workloadv1alpha1.ModelServing{
 		ObjectMeta: metav1.ObjectMeta{

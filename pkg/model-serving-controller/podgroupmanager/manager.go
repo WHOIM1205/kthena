@@ -20,7 +20,9 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"sync"
 	"sync/atomic"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	apiextv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
@@ -29,6 +31,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/util/retry"
@@ -37,8 +40,8 @@ import (
 	batchv1alpha1 "volcano.sh/apis/pkg/apis/batch/v1alpha1"
 	schedulingv1beta1 "volcano.sh/apis/pkg/apis/scheduling/v1beta1"
 	volcanoclient "volcano.sh/apis/pkg/client/clientset/versioned"
-	"volcano.sh/apis/pkg/client/informers/externalversions"
-	"volcano.sh/apis/pkg/client/listers/scheduling/v1beta1"
+	volcanoinformers "volcano.sh/apis/pkg/client/informers/externalversions"
+	volcanoschedulerlister "volcano.sh/apis/pkg/client/listers/scheduling/v1beta1"
 
 	workloadv1alpha1 "github.com/volcano-sh/kthena/pkg/apis/workload/v1alpha1"
 	"github.com/volcano-sh/kthena/pkg/model-serving-controller/datastore"
@@ -47,28 +50,35 @@ import (
 
 const (
 	podGroupCRDName = "podgroups.scheduling.volcano.sh"
+	groupNameKey    = "GroupName"
 )
 
 // Manager manages PodGroups for gang scheduling
 type Manager struct {
-	kubeClient        kubernetes.Interface
-	volcanoClient     volcanoclient.Interface
-	store             datastore.Store
-	hasPodGroupCRD    atomic.Bool
-	hasSubGroupPolicy atomic.Bool
+	PodGroupCRDChangeCh          chan bool
+	kubeClient                   kubernetes.Interface
+	volcanoClient                volcanoclient.Interface
+	store                        datastore.Store
+	hasPodGroupCRD               atomic.Bool
+	hasSubGroupPolicy            atomic.Bool
+	podGroupInformerInitCallback func(cache.SharedIndexInformer)
 
 	CrdInformer cache.SharedIndexInformer
 
-	PodGroupInformer cache.SharedIndexInformer
-	podGroupLister   v1beta1.PodGroupLister
+	lock                   sync.Mutex
+	PodGroupInformer       cache.SharedIndexInformer
+	PodGroupLister         volcanoschedulerlister.PodGroupLister
+	podGroupInformerCancel context.CancelFunc
 }
 
 // NewManager creates a new gang scheduling manager
-func NewManager(kubeClient kubernetes.Interface, volcanoClient volcanoclient.Interface, apiextClient apiextclient.Interface, store datastore.Store) *Manager {
+func NewManager(kubeClient kubernetes.Interface, volcanoClient volcanoclient.Interface, apiextClient apiextclient.Interface, store datastore.Store, podGroupInformerInitCallback func(cache.SharedIndexInformer)) *Manager {
 	newManager := Manager{
-		kubeClient:    kubeClient,
-		volcanoClient: volcanoClient,
-		store:         store,
+		PodGroupCRDChangeCh:          make(chan bool, 5),
+		kubeClient:                   kubeClient,
+		volcanoClient:                volcanoClient,
+		store:                        store,
+		podGroupInformerInitCallback: podGroupInformerInitCallback,
 	}
 
 	newManager.hasPodGroupCRD.Store(false)
@@ -130,31 +140,118 @@ func NewManager(kubeClient kubernetes.Interface, volcanoClient volcanoclient.Int
 
 	newManager.CrdInformer = crdInformer
 
-	// Set up a shared informer factory for podgroup
-	podGroupInformerFactory := externalversions.NewSharedInformerFactory(volcanoClient, 0)
-	podGroupInformer := podGroupInformerFactory.Scheduling().V1beta1().PodGroups()
-	newManager.PodGroupInformer = podGroupInformer.Informer()
-	newManager.podGroupLister = podGroupInformer.Lister()
-
 	return &newManager
+}
+
+func (m *Manager) HasPodGroupCRD() bool {
+	return m.hasPodGroupCRD.Load()
+}
+
+func (m *Manager) GetPodGroupInformer() cache.SharedIndexInformer {
+	m.lock.Lock()
+	defer m.lock.Unlock()
+	return m.PodGroupInformer
+}
+
+func (m *Manager) GetPodGroupLister() volcanoschedulerlister.PodGroupLister {
+	m.lock.Lock()
+	defer m.lock.Unlock()
+	return m.PodGroupLister
+}
+
+func (m *Manager) Run(parentCtx context.Context) error {
+	if m.CrdInformer == nil {
+		return fmt.Errorf("CRD informer is not initialized")
+	}
+	go m.CrdInformer.RunWithContext(parentCtx)
+	if !cache.WaitForCacheSync(parentCtx.Done(), m.CrdInformer.HasSynced) {
+		return fmt.Errorf("failed to sync PodGroup CRD informer cache")
+	}
+
+	return m.initPodGroupInformer()
+}
+
+func (m *Manager) initPodGroupInformer() error {
+	m.lock.Lock()
+	defer m.lock.Unlock()
+
+	if m.PodGroupInformer != nil {
+		return nil
+	}
+
+	if m.volcanoClient == nil {
+		return fmt.Errorf("volcano client is not initialized")
+	}
+
+	factory := volcanoinformers.NewSharedInformerFactory(m.volcanoClient, 0)
+	pgInformer := factory.Scheduling().V1beta1().PodGroups()
+	if err := pgInformer.Informer().AddIndexers(cache.Indexers{
+		groupNameKey: utils.GroupNameIndexFunc,
+	}); err != nil {
+		return fmt.Errorf("cannot create podGroup Informer Index, err: %v", err)
+	}
+	m.PodGroupInformer = pgInformer.Informer()
+	m.PodGroupLister = pgInformer.Lister()
+
+	if m.podGroupInformerInitCallback != nil {
+		m.podGroupInformerInitCallback(m.PodGroupInformer)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	m.podGroupInformerCancel = cancel
+
+	go m.PodGroupInformer.RunWithContext(ctx)
+	if !cache.WaitForCacheSync(ctx.Done(), m.PodGroupInformer.HasSynced) {
+		return fmt.Errorf("failed to sync PodGroup informer cache")
+	}
+	return nil
+}
+
+func (m *Manager) stopPodGroupInformer() {
+	m.lock.Lock()
+	defer m.lock.Unlock()
+
+	if m.podGroupInformerCancel != nil {
+		m.podGroupInformerCancel()
+		m.podGroupInformerCancel = nil
+		m.PodGroupInformer = nil
+	}
 }
 
 // CreateOrUpdatePodGroup creates a PodGroup for the given ServingGroup if it doesn't exist,
 // or updates it if it does.
-func (m *Manager) CreateOrUpdatePodGroup(ctx context.Context, ms *workloadv1alpha1.ModelServing, pgName string) error {
+// Returns an error and a requeue duration if there is an error.
+func (m *Manager) CreateOrUpdatePodGroup(ctx context.Context, ms *workloadv1alpha1.ModelServing, pgName string) (error, time.Duration) {
 	if !m.shouldCreatePodGroup(ms) {
-		return nil
+		return nil, 0
 	}
 
-	podGroup, err := m.volcanoClient.SchedulingV1beta1().PodGroups(ms.Namespace).Get(ctx, pgName, metav1.GetOptions{})
+	podgroupLister := m.GetPodGroupLister()
+	podGroup, err := podgroupLister.PodGroups(ms.Namespace).Get(pgName)
 	if err != nil {
 		if !apierrors.IsNotFound(err) {
-			return fmt.Errorf("failed to get PodGroup %s: %v", pgName, err)
+			return fmt.Errorf("failed to get PodGroup %s: %v", pgName, err), 0
 		}
-		return m.createPodGroup(ctx, ms, pgName)
+		return m.createPodGroup(ctx, ms, pgName), 0
 	}
 
-	return m.updatePodGroupIfNeeded(ctx, podGroup, ms)
+	if !isOwnedByModelServingWithUID(podGroup, ms.UID) {
+		return fmt.Errorf("PodGroup %s is not owned by ModelServing %s", pgName, ms.Name), 1 * time.Second
+	}
+
+	return m.updatePodGroupIfNeeded(ctx, podGroup, ms), 0
+}
+
+func isOwnedByModelServingWithUID(obj metav1.Object, uid types.UID) bool {
+	for _, ownerRef := range obj.GetOwnerReferences() {
+		if ownerRef.APIVersion == workloadv1alpha1.SchemeGroupVersion.String() &&
+			ownerRef.Kind == "ModelServing" &&
+			ownerRef.UID == uid {
+			return true
+		}
+	}
+	klog.Warningf("object %s/%s is not owned by ModelServing with UID %s", obj.GetNamespace(), obj.GetName(), uid)
+	return false
 }
 
 // shouldCreatePodGroup checks if gang scheduling or networkTopology scheduling is enabled for the ModelServing.
@@ -258,11 +355,27 @@ func (m *Manager) calculateRequirements(ms *workloadv1alpha1.ModelServing, podGr
 		if err != nil {
 			klog.V(2).Infof("Failed to get role list for role %s: %v", role.Name, err)
 		}
+
+		// Check if PodGroup exists to determine if we're handling a deletion/recreation scenario
+		podGroupExists := true
+		if _, err := m.volcanoClient.SchedulingV1beta1().PodGroups(ms.Namespace).Get(context.TODO(), podGroupName, metav1.GetOptions{}); err != nil {
+			if apierrors.IsNotFound(err) {
+				podGroupExists = false
+				klog.V(4).Infof("PodGroup %s does not exist, will create it", podGroupName)
+			} else {
+				klog.Errorf("Failed to check existence of PodGroup %s: %v", podGroupName, err)
+			}
+		}
+
 		// During scaling operations, podGroup does not affect scaling policies.
 		// Under the binpack scaling strategy, it is unknown which role replicas will be deleted.
-		// Therefore, no action is taken during scaling.
-		// PodGroup will updated after the role completes scaling down.
-		if len(roleList) > expectReplicas {
+		// However, if the PodGroup was deleted externally, we should still calculate requirements
+		// to recreate it with correct settings.
+		if len(roleList) > expectReplicas && podGroupExists {
+			// Only skip during active scaling if PodGroup exists.
+			// If PodGroup was deleted externally, we should proceed to recalculate and recreate it.
+			klog.V(4).Infof("Skipping PodGroup update for %s during scaling operation, roleList length: %d, expectReplicas: %d",
+				podGroupName, len(roleList), expectReplicas)
 			continue
 		}
 
@@ -349,7 +462,7 @@ func (m *Manager) getExistingPodGroups(ctx context.Context, ms *workloadv1alpha1
 func (m *Manager) updatePodGroupIfNeeded(ctx context.Context, existing *schedulingv1beta1.PodGroup, ms *workloadv1alpha1.ModelServing) error {
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		// Get latest podgroup from informer store
-		currentPodGroup, getErr := m.podGroupLister.PodGroups(existing.GetNamespace()).Get(existing.GetName())
+		currentPodGroup, getErr := m.PodGroupLister.PodGroups(existing.GetNamespace()).Get(existing.GetName())
 		if getErr != nil {
 			return getErr
 		}
@@ -453,21 +566,39 @@ func (m *Manager) AnnotatePodWithPodGroup(pod *corev1.Pod, ms *workloadv1alpha1.
 
 // Helper function to handle PodGroup CRD changes
 func (m *Manager) handlePodGroupCRDChange(crd *apiextv1.CustomResourceDefinition, isDeleted bool) {
+	oldValue := m.hasPodGroupCRD.Load()
+	defer func() {
+		newValue := m.hasPodGroupCRD.Load()
+		if oldValue != newValue {
+			select {
+			case m.PodGroupCRDChangeCh <- newValue:
+			default:
+				// Avoid blocking if channel is full
+				klog.V(4).Infof("PodGroupCRDChangeCh is full, skipping notification")
+			}
+		}
+	}()
+
 	if isDeleted {
 		klog.Info("[CRD Deleted] PodGroup CRD removed")
 		m.hasPodGroupCRD.Store(false)
 		m.hasSubGroupPolicy.Store(false)
+		m.stopPodGroupInformer()
 		return
 	}
 
-	klog.Info("[CRD Added] PodGroup CRD detected")
+	klog.Info("PodGroup CRD detected")
 	m.hasPodGroupCRD.Store(true)
 	if podGroupCRDHasSubGroup(crd) {
-		klog.Info("[CRD Added] PodGroup CRD has subGroupPolicy feature")
+		klog.Info("PodGroup CRD has subGroupPolicy feature")
 		m.hasSubGroupPolicy.Store(true)
 	} else {
-		klog.Info("[CRD Added] PodGroup CRD does not have subGroupPolicy feature")
+		klog.Info("PodGroup CRD does not have subGroupPolicy feature")
 		m.hasSubGroupPolicy.Store(false)
+	}
+
+	if initErr := m.initPodGroupInformer(); initErr != nil {
+		klog.Errorf("failed to initialize PodGroup informer: %v", initErr)
 	}
 }
 
