@@ -363,6 +363,10 @@ func (m *Manager) updatePodGroupIfNeeded(ctx context.Context, existing *scheduli
 }
 
 func (m *Manager) DeletePodGroup(ctx context.Context, ms *workloadv1alpha1.ModelServing, servingGroupName string) error {
+	if !m.hasPodGroupCRD.Load() {
+		return nil
+	}
+
 	if err := m.volcanoClient.SchedulingV1beta1().PodGroups(ms.Namespace).Delete(ctx, servingGroupName, metav1.DeleteOptions{}); err != nil {
 		if !apierrors.IsNotFound(err) {
 			return err
