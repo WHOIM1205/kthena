@@ -5668,7 +5668,7 @@ func TestHandleReadyPodRoleStatusUpdate(t *testing.T) {
 				servicesInformer: serviceInformer.Informer(),
 				servicesLister:   serviceInformer.Lister(),
 				store:            store,
-				workqueue:        workqueue.NewTypedRateLimitingQueue[string](workqueue.DefaultTypedControllerRateLimiter[string]()),
+				workqueue:        workqueue.NewRateLimitingQueue(workqueue.DefaultControllerRateLimiter()), //nolint:staticcheck
 			}
 
 			// Start informers
