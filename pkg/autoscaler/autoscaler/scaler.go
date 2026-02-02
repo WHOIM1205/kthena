@@ -97,7 +97,7 @@ func (autoscaler *Autoscaler) Scale(ctx context.Context, podLister listerv1.PodL
 		klog.InfoS("skip recommended instances")
 		return &ScaleResult{Skip: true}, nil
 	}
-	if autoscalePolicy.Spec.Behavior.ScaleUp.PanicPolicy.PanicThresholdPercent != nil && recommendedInstances*100 >= currentInstancesCount*(*autoscalePolicy.Spec.Behavior.ScaleUp.PanicPolicy.PanicThresholdPercent) {
+	if autoscalePolicy.Spec.Behavior.ScaleUp.PanicPolicy.PanicThresholdPercent != nil && int64(recommendedInstances)*100 >= int64(currentInstancesCount)*int64(*autoscalePolicy.Spec.Behavior.ScaleUp.PanicPolicy.PanicThresholdPercent) {
 		autoscaler.Status.RefreshPanicMode()
 	}
 	CorrectedInstancesAlgorithm := algorithm.CorrectedInstancesAlgorithm{

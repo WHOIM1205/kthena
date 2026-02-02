@@ -330,7 +330,7 @@ func (ac *AutoscaleController) doScale(ctx context.Context, binding *workload.Au
 		klog.Errorf("failed to do homogeneous scaling for target %s, err: %v", target.TargetRef.Name, err)
 		return err
 	}
-	if scaleResult.Skip {
+	if scaleResult == nil || scaleResult.Skip {
 		return nil
 	}
 	// Do update replicas

@@ -199,7 +199,7 @@ func (optimizer *Optimizer) Optimize(ctx context.Context, podLister listerv1.Pod
 		return &OptimizeResult{Skip: true}, nil
 	}
 	if autoscalePolicy.Spec.Behavior.ScaleUp.PanicPolicy.PanicThresholdPercent != nil &&
-		recommendedInstances*100 >= instancesCountSum*(*autoscalePolicy.Spec.Behavior.ScaleUp.PanicPolicy.PanicThresholdPercent) {
+		int64(recommendedInstances)*100 >= int64(instancesCountSum)*int64(*autoscalePolicy.Spec.Behavior.ScaleUp.PanicPolicy.PanicThresholdPercent) {
 		optimizer.Status.RefreshPanicMode()
 	}
 	CorrectedInstancesAlgorithm := algorithm.CorrectedInstancesAlgorithm{

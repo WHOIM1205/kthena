@@ -23,6 +23,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -244,9 +245,6 @@ func TestDoScale_HistoryCommitBehavior(t *testing.T) {
 		targetLoad           string
 		minReplicas          int32
 		maxReplicas          int32
-		expectUpdate         bool
-		expectHistoryCommit  bool
-		injectUpdateError    bool
 		expectError          bool
 		expectedFinalReplica int32
 	}{
@@ -258,9 +256,6 @@ func TestDoScale_HistoryCommitBehavior(t *testing.T) {
 			targetLoad:           "1",
 			minReplicas:          1,
 			maxReplicas:          10,
-			expectUpdate:         true,
-			expectHistoryCommit:  true,
-			injectUpdateError:    false,
 			expectError:          false,
 			expectedFinalReplica: 10,
 		},
@@ -272,9 +267,6 @@ func TestDoScale_HistoryCommitBehavior(t *testing.T) {
 			targetLoad:           "1",
 			minReplicas:          1,
 			maxReplicas:          10,
-			expectUpdate:         true,
-			expectHistoryCommit:  true,
-			injectUpdateError:    false,
 			expectError:          false,
 			expectedFinalReplica: 1,
 		},
@@ -286,9 +278,6 @@ func TestDoScale_HistoryCommitBehavior(t *testing.T) {
 			targetLoad:          "1",
 			minReplicas:         1,
 			maxReplicas:         10,
-			expectUpdate:        true,
-			expectHistoryCommit: true,
-			injectUpdateError:   false,
 			expectError:         false,
 			// With tolerance 0%, 5 load / 1 target = 5 replicas needed
 			expectedFinalReplica: 5,
@@ -434,7 +423,7 @@ func TestDoScale_ErrorPropagation(t *testing.T) {
 				if err == nil {
 					t.Fatalf("expected error but got nil")
 				}
-				if tt.expectErrorMsg != "" && !containsString(err.Error(), tt.expectErrorMsg) {
+				if tt.expectErrorMsg != "" && !strings.Contains(err.Error(), tt.expectErrorMsg) {
 					t.Fatalf("expected error to contain %q, got %q", tt.expectErrorMsg, err.Error())
 				}
 			} else {
@@ -679,17 +668,4 @@ func TestDoOptimize_HistoryCommitOnlyAfterAllUpdatesSucceed(t *testing.T) {
 	if updatedA.Spec.Replicas == nil || updatedB.Spec.Replicas == nil {
 		t.Fatalf("both replicas should be set")
 	}
-}
-
-func containsString(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsStringHelper(s, substr))
-}
-
-func containsStringHelper(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
 }
