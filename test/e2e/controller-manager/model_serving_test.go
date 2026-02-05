@@ -19,6 +19,7 @@ package controller_manager
 import (
 	"context"
 	"fmt"
+	"math/rand"
 	"sync"
 	"testing"
 	"time"
@@ -46,7 +47,7 @@ func TestModelServingScaleUp(t *testing.T) {
 	ctx, kthenaClient := setupControllerManagerE2ETest(t)
 
 	// Create a basic ModelServing with 1 replica
-	modelServing := createBasicModelServing("test-scale-up", 1, 1)
+	modelServing := createBasicModelServing("test-scale-up", 1)
 
 	// Create the ModelServing
 	t.Log("Creating ModelServing with 1 servingGHroup replica")
@@ -101,7 +102,7 @@ func TestModelServingPodRecovery(t *testing.T) {
 	require.NoError(t, err, "Failed to create Kubernetes client")
 
 	// Create a basic ModelServing
-	modelServing := createBasicModelServing("test-pod-recovery", 1, 1)
+	modelServing := createBasicModelServing("test-pod-recovery", 1)
 
 	t.Log("Creating ModelServing for pod recovery test")
 	_, err = kthenaClient.WorkloadV1alpha1().
@@ -187,7 +188,7 @@ func TestModelServingServiceRecovery(t *testing.T) {
 	require.NoError(t, err, "Failed to create Kubernetes client")
 
 	// Create a basic ModelServing
-	modelServing := createBasicModelServing("test-service-recovery", 1, 1)
+	modelServing := createBasicModelServing("test-service-recovery", 1)
 
 	t.Log("Creating ModelServing for service recovery test")
 	_, err = kthenaClient.WorkloadV1alpha1().
@@ -295,7 +296,7 @@ func TestModelServingWithDuplicateHostAliases(t *testing.T) {
 	require.NoError(t, err, "Failed to create Kubernetes client")
 
 	// Create a ModelServing with duplicate IP hostAliases
-	modelServing := createBasicModelServing("test-duplicate-hostaliases", 1, 1)
+	modelServing := createBasicModelServing("test-duplicate-hostaliases", 1)
 	modelServing.Spec.Template.Roles[0].EntryTemplate.Spec.HostAliases = []corev1.HostAlias{
 		{
 			IP:        "10.1.2.3",
@@ -525,7 +526,188 @@ func TestModelServingRollingUpdateMaxUnavailable(t *testing.T) {
 	t.Log("ModelServing rolling update maxUnavailable test passed successfully")
 }
 
-func createBasicModelServing(name string, servingGroupReplicas, roleReplicas int32) *workload.ModelServing {
+// TestModelServingControllerManagerRestart verifies that ModelServing pod creation
+// is successful even when the controller-manager restarts during reconciliation.
+func TestModelServingControllerManagerRestart(t *testing.T) {
+	ctx, kthenaClient := setupControllerManagerE2ETest(t)
+
+	// Create Kubernetes client
+	kubeConfig, err := utils.GetKubeConfig()
+	require.NoError(t, err, "Failed to get kubeconfig")
+
+	kubeClient, err := kubernetes.NewForConfig(kubeConfig)
+	require.NoError(t, err, "Failed to create Kubernetes client")
+
+	// Create a complicated ModelServing with multiple roles
+	// 5 serving groups × (3 pods for prefill + 2 pods for decode) = 25 pods total
+	prefillRole := createRole("prefill", 1, 2)
+	decodeRole := createRole("decode", 1, 1)
+	modelServing := createBasicModelServing("test-controller-restart", 5, prefillRole, decodeRole)
+
+	t.Log("Creating complicated ModelServing with 5 serving groups and 2 roles (25 total pods expected)")
+	_, err = kthenaClient.WorkloadV1alpha1().
+		ModelServings(testNamespace).
+		Create(ctx, modelServing, metav1.CreateOptions{})
+	require.NoError(t, err, "Failed to create ModelServing")
+
+	// Register cleanup for ModelServing
+	t.Cleanup(func() {
+		cleanupCtx := context.Background()
+		t.Logf("Cleaning up ModelServing: %s/%s", modelServing.Namespace, modelServing.Name)
+		if err := kthenaClient.WorkloadV1alpha1().ModelServings(testNamespace).Delete(cleanupCtx, modelServing.Name, metav1.DeleteOptions{}); err != nil {
+			t.Logf("Warning: Failed to delete ModelServing %s/%s: %v", modelServing.Namespace, modelServing.Name, err)
+		}
+	})
+
+	// Wait briefly for initial reconciliation to start
+	t.Log("Waiting for initial reconciliation to start...")
+	// Wait for a random duration between 0 and 3 seconds (in 100ms increments)
+	randomWait := time.Duration(rand.New(rand.NewSource(time.Now().UnixNano())).Intn(31)*100) * time.Millisecond
+	t.Logf("Waiting for %v before restarting controller-manager", randomWait)
+	time.Sleep(randomWait)
+
+	// Find and delete controller-manager pods
+	t.Logf("Finding controller-manager pods in namespace %s", kthenaNamespace)
+
+	// Use label selector to find controller-manager pods
+	labelSelector := "app.kubernetes.io/component=kthena-controller-manager"
+	controllerPods, err := kubeClient.CoreV1().Pods(kthenaNamespace).List(ctx, metav1.ListOptions{
+		LabelSelector: labelSelector,
+	})
+	require.NoError(t, err, "Failed to list controller-manager pods")
+	require.NotEmpty(t, controllerPods.Items, "No controller-manager pods found")
+
+	// Delete all controller-manager pods
+	for _, pod := range controllerPods.Items {
+		t.Logf("Deleting controller-manager pod: %s", pod.Name)
+		err := kubeClient.CoreV1().Pods(kthenaNamespace).Delete(ctx, pod.Name, metav1.DeleteOptions{})
+		require.NoError(t, err, "Failed to delete controller-manager pod %s", pod.Name)
+	}
+
+	// Wait for controller-manager pods to restart and become ready
+	t.Log("Waiting for controller-manager to restart...")
+	require.Eventually(t, func() bool {
+		pods, err := kubeClient.CoreV1().Pods(kthenaNamespace).List(ctx, metav1.ListOptions{
+			LabelSelector: labelSelector,
+		})
+		if err != nil {
+			return false
+		}
+		// Check that at least one controller-manager pod is running and ready
+		for _, pod := range pods.Items {
+			if pod.Status.Phase == corev1.PodRunning {
+				for _, condition := range pod.Status.Conditions {
+					if condition.Type == corev1.PodReady && condition.Status == corev1.ConditionTrue {
+						t.Logf("Controller-manager pod is ready: %s", pod.Name)
+						return true
+					}
+				}
+			}
+		}
+		return false
+	}, 3*time.Minute, 5*time.Second, "Controller-manager did not restart and become ready")
+
+	// Wait for ModelServing to be ready
+	t.Log("Waiting for ModelServing to be ready after controller-manager restart...")
+	utils.WaitForModelServingReady(t, ctx, kthenaClient, testNamespace, modelServing.Name)
+
+	// Verify all expected pods are created
+	msLabelSelector := "modelserving.volcano.sh/name=" + modelServing.Name
+	podList, err := kubeClient.CoreV1().Pods(testNamespace).List(ctx, metav1.ListOptions{
+		LabelSelector: msLabelSelector,
+	})
+	require.NoError(t, err, "Failed to list ModelServing pods")
+
+	// Calculate expected pod count:
+	// 5 serving groups × (3 pods for prefill role + 2 pods for decode role) = 25 pods
+	expectedPodCount := 25
+	actualPodCount := len(podList.Items)
+
+	t.Logf("Expected pod count: %d, Actual pod count: %d", expectedPodCount, actualPodCount)
+	assert.Equal(t, expectedPodCount, actualPodCount, "Pod count mismatch after controller-manager restart")
+
+	// Verify all pods are running
+	runningPods := 0
+	for _, pod := range podList.Items {
+		if pod.Status.Phase == corev1.PodRunning {
+			runningPods++
+		}
+	}
+	assert.Equal(t, actualPodCount, runningPods, "All created pods should be in Running phase")
+
+	t.Log("ModelServing controller-manager restart test passed successfully")
+}
+
+// createRole is a helper function to create a Role with specified replicas and workers
+func createRole(name string, roleReplicas, workerReplicas int32) workload.Role {
+	return workload.Role{
+		Name:     name,
+		Replicas: &roleReplicas,
+		EntryTemplate: workload.PodTemplateSpec{
+			Spec: corev1.PodSpec{
+				Containers: []corev1.Container{
+					{
+						Name:  "test-container",
+						Image: "nginx:latest",
+						Ports: []corev1.ContainerPort{
+							{
+								Name:          "http",
+								ContainerPort: 80,
+							},
+						},
+					},
+				},
+			},
+		},
+		WorkerReplicas: workerReplicas,
+		WorkerTemplate: &workload.PodTemplateSpec{
+			Spec: corev1.PodSpec{
+				Containers: []corev1.Container{
+					{
+						Name:  "worker-container",
+						Image: "nginx:latest",
+						Ports: []corev1.ContainerPort{
+							{
+								Name:          "http",
+								ContainerPort: 80,
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+}
+
+func createBasicModelServing(name string, servingGroupReplicas int32, roles ...workload.Role) *workload.ModelServing {
+	// If no roles are provided, create a default role
+	if len(roles) == 0 {
+		defaultRoleReplicas := int32(1)
+		roles = []workload.Role{
+			{
+				Name:     "prefill",
+				Replicas: &defaultRoleReplicas,
+				EntryTemplate: workload.PodTemplateSpec{
+					Spec: corev1.PodSpec{
+						Containers: []corev1.Container{
+							{
+								Name:  "test-container",
+								Image: "nginx:latest",
+								Ports: []corev1.ContainerPort{
+									{
+										Name:          "http",
+										ContainerPort: 80,
+									},
+								},
+							},
+						},
+					},
+				},
+				WorkerReplicas: 0,
+			},
+		}
+	}
+
 	return &workload.ModelServing{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
@@ -534,29 +716,7 @@ func createBasicModelServing(name string, servingGroupReplicas, roleReplicas int
 		Spec: workload.ModelServingSpec{
 			Replicas: &servingGroupReplicas,
 			Template: workload.ServingGroup{
-				Roles: []workload.Role{
-					{
-						Name:     "prefill",
-						Replicas: &roleReplicas,
-						EntryTemplate: workload.PodTemplateSpec{
-							Spec: corev1.PodSpec{
-								Containers: []corev1.Container{
-									{
-										Name:  "test-container",
-										Image: "nginx:latest",
-										Ports: []corev1.ContainerPort{
-											{
-												Name:          "http",
-												ContainerPort: 80,
-											},
-										},
-									},
-								},
-							},
-						},
-						WorkerReplicas: 0,
-					},
-				},
+				Roles: roles,
 			},
 		},
 	}
