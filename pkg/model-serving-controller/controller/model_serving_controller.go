@@ -857,7 +857,8 @@ func (c *ModelServingController) scaleUpRoles(ctx context.Context, ms *workloadv
 			roleID := utils.GenerateRoleID(targetRole.Name, newIndex)
 			c.store.AddRole(utils.GetNamespaceName(ms), groupName, targetRole.Name, roleID, newRevision)
 			// Emit event for new role entering Creating state
-			c.emitRoleStatusEvent(ms, groupName, targetRole.Name, roleID, datastore.RoleCreating)
+			message := fmt.Sprintf("Role %s/%s in ServingGroup %s is now Creating", targetRole.Name, roleID, groupName)
+			c.emitRoleStatusEvent(ms, corev1.EventTypeWarning, "RoleCreating", message)
 		}
 	}
 }
@@ -915,37 +916,15 @@ func (c *ModelServingController) manageRoleReplicas(ctx context.Context, ms *wor
 	}
 }
 
-// emitRoleStatusEvent emits a Kubernetes Event when a role status transitions.
+// emitRoleStatusEvent emits a Kubernetes Event for a role-related status change.
 // It is intentionally lightweight and no-op when recorder is not initialized.
 func (c *ModelServingController) emitRoleStatusEvent(
 	ms *workloadv1alpha1.ModelServing,
-	servingGroupName, roleName, roleID string,
-	status datastore.RoleStatus,
+	eventType, reason, message string,
 ) {
 	if c == nil || c.recorder == nil || ms == nil {
 		return
 	}
-
-	var eventType, reason, message string
-
-	switch status {
-	case datastore.RoleCreating:
-		eventType = corev1.EventTypeWarning
-		reason = "RoleCreating"
-		message = fmt.Sprintf("Role %s/%s in ServingGroup %s is now Creating", roleName, roleID, servingGroupName)
-	case datastore.RoleRunning:
-		eventType = corev1.EventTypeNormal
-		reason = "RoleRunning"
-		message = fmt.Sprintf("Role %s/%s in ServingGroup %s is now Running", roleName, roleID, servingGroupName)
-	case datastore.RoleDeleting:
-		eventType = corev1.EventTypeNormal
-		reason = "RoleDeleting"
-		message = fmt.Sprintf("Role %s/%s in ServingGroup %s is now Deleting", roleName, roleID, servingGroupName)
-	default:
-		// Only emitting events for well-defined states keeps noise low.
-		return
-	}
-
 	c.recorder.Event(ms, eventType, reason, message)
 }
 
@@ -983,7 +962,8 @@ func (c *ModelServingController) DeleteRole(ctx context.Context, ms *workloadv1a
 		return
 	}
 	// Emit event for role entering Deleting state.
-	c.emitRoleStatusEvent(ms, groupName, roleName, roleID, datastore.RoleDeleting)
+	message := fmt.Sprintf("Role %s/%s in ServingGroup %s is now Deleting", roleName, roleID, groupName)
+	c.emitRoleStatusEvent(ms, corev1.EventTypeNormal, "RoleDeleting", message)
 	var deleteErr error
 	defer func() {
 		if deleteErr == nil {
@@ -1146,7 +1126,8 @@ func (c *ModelServingController) handleReadyPod(ms *workloadv1alpha1.ModelServin
 			} else {
 				klog.V(2).Infof("Update role %s/%s status to Running", roleName, roleID)
 				// Emit event for role transitioning to Running
-				c.emitRoleStatusEvent(ms, servingGroupName, roleName, roleID, datastore.RoleRunning)
+				message := fmt.Sprintf("Role %s/%s in ServingGroup %s is now Running", roleName, roleID, servingGroupName)
+				c.emitRoleStatusEvent(ms, corev1.EventTypeNormal, "RoleRunning", message)
 			}
 		}
 	}
@@ -1196,7 +1177,8 @@ func (c *ModelServingController) handleErrorPod(ms *workloadv1alpha1.ModelServin
 		} else {
 			klog.V(2).Infof("update role %s/%s to Creating when pod fails", roleName, roleID)
 			// Emit event for role re-entering Creating state due to failure
-			c.emitRoleStatusEvent(ms, servingGroupName, roleName, roleID, datastore.RoleCreating)
+			message := fmt.Sprintf("Role %s/%s in ServingGroup %s is now Creating", roleName, roleID, servingGroupName)
+			c.emitRoleStatusEvent(ms, corev1.EventTypeWarning, "RoleCreating", message)
 		}
 	}
 
@@ -1899,7 +1881,8 @@ func (c *ModelServingController) CreatePodsForServingGroup(ctx context.Context, 
 			roleID := utils.GenerateRoleID(role.Name, i)
 			c.store.AddRole(utils.GetNamespaceName(ms), servingGroupName, role.Name, roleID, revision)
 			// Emit event for new role entering Creating state
-			c.emitRoleStatusEvent(ms, servingGroupName, role.Name, roleID, datastore.RoleCreating)
+			message := fmt.Sprintf("Role %s/%s in ServingGroup %s is now Creating", role.Name, roleID, servingGroupName)
+			c.emitRoleStatusEvent(ms, corev1.EventTypeWarning, "RoleCreating", message)
 		}
 	}
 	return nil
