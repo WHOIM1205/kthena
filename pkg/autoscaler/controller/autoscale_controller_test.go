@@ -281,14 +281,16 @@ func TestSetPanicThreshold_DoOptimize_PanicModeWorks(t *testing.T) {
 	if err := ac.doOptimize(context.Background(), binding, policy); err != nil {
 		t.Fatalf("doOptimize error: %v", err)
 	}
-	updates := 0
-	for _, a := range client.Fake.Actions() {
-		if a.GetVerb() == "update" && a.GetResource().Resource == "modelservings" {
-			updates++
-		}
+	updatedA, err := client.WorkloadV1alpha1().ModelServings(ns).Get(context.Background(), "ms-panic-a", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get updated ms-panic-a error: %v", err)
 	}
-	if updates == 0 {
-		t.Fatalf("expected update actions when PanicThresholdPercent is set, got 0")
+	updatedB, err := client.WorkloadV1alpha1().ModelServings(ns).Get(context.Background(), "ms-panic-b", metav1.GetOptions{})
+	if err != nil {
+		t.Fatalf("get updated ms-panic-b error: %v", err)
+	}
+	if *updatedA.Spec.Replicas != 5 || *updatedB.Spec.Replicas != 4 {
+		t.Fatalf("expected panic mode distribution ms-panic-a=5 ms-panic-b=4, got a=%d b=%d", *updatedA.Spec.Replicas, *updatedB.Spec.Replicas)
 	}
 }
 
